@@ -23,3 +23,24 @@ func ConfigFromContext(ctx context.Context) ConfigView {
 	}
 	return nil
 }
+
+// ConfigGetStr reads a string from cfg. Tries prefix+key first, then key (for standalone vs router).
+func ConfigGetStr(cfg ConfigView, prefix, key, defaultValue string) string {
+	if cfg == nil {
+		return defaultValue
+	}
+	keys := []string{key}
+	if prefix != "" {
+		keys = []string{prefix + key, key}
+	}
+	for _, k := range keys {
+		v, ok := cfg[k]
+		if !ok || v == nil {
+			continue
+		}
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return defaultValue
+}

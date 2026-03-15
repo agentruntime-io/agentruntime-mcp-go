@@ -9,8 +9,9 @@
 //   - OpenTelemetry tracing (when tracing.enabled in config)
 //   - Proxy: RunProxy to forward to another MCP server with overlay
 //
-// Use Run with a setup function to register tools. Config is available in
-// tool handlers via ConfigFromContext(ctx).
+// Use Run with a setup function, or RunWithRegistry for plugin-style adapters.
+// Adapters register via RegisterAdapter in init(); use blank imports to load.
+// Config is available in tool handlers via ConfigFromContext(ctx).
 //
 // Version: 0.0.1
 package agentruntimemcp

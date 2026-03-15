@@ -78,6 +78,26 @@ agentmcp.RunProxy(
 )
 ```
 
+## Adapter pattern (plugin / monolith)
+
+Like foodics/worker-go: adapters register in `init()`, load via blank imports.
+
+```go
+// In connector/mcp/register.go
+func init() {
+    agentmcp.RegisterAdapter("resend", func(input agentmcp.AdapterConstructorInput) (agentmcp.Adapter, error) {
+        return &adapter{}, nil
+    })
+}
+
+// Monolith: all registered adapters
+import _ "github.com/.../resend-connector-go/mcp"
+agentmcp.RunWithRegistry("config.yaml")
+
+// Individual: only one adapter
+agentmcp.RunWithRegistry("config.yaml", "resend")
+```
+
 ## Templates
 
 Example MCP server using this SDK:
