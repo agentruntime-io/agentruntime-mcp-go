@@ -20,6 +20,29 @@ func Run(configPath string, setup func(server *mcp.Server, configSchema map[stri
 	return RunWithConfig(cfg, setup)
 }
 
+// RunWithRegistry runs the MCP server with all registered adapters (plugin pattern).
+// Call RegisterAdapter in init() from each connector package. Use blank imports
+// to load adapters: import _ "github.com/.../resend-connector-go"
+//
+// If adapterNames is non-empty, only those adapters are loaded (for individual deployment).
+// If empty, all registered adapters are loaded (for monolith).
+func RunWithRegistry(configPath string, adapterNames ...string) error {
+	adapters, err := getAdapters(adapterNames)
+	if err != nil {
+		return err
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		return err
+	}
+	return RunWithConfig(cfg, func(server *mcp.Server, schema map[string]any) {
+		sw := NewSchemaWriter(schema)
+		for _, a := range adapters {
+			a.Register(server, sw)
+		}
+	})
+}
+
 // RunWithConfig runs the MCP server with the given config.
 func RunWithConfig(cfg *ServerConfig, setup func(server *mcp.Server, configSchema map[string]any)) error {
 	if cfg == nil {

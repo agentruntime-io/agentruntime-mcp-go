@@ -6,12 +6,25 @@ import (
 )
 
 var (
-	ErrAuthFailed       = errors.New("invalid or missing auth")
-	ErrConfigLoad       = errors.New("failed to load config")
-	ErrControlConfig    = errors.New("control config resolution failed")
-	ErrProxyTarget      = errors.New("proxy target not configured")
-	ErrInvalidConfig    = errors.New("invalid config")
+	ErrAuthFailed          = errors.New("invalid or missing auth")
+	ErrConfigLoad          = errors.New("failed to load config")
+	ErrControlConfig       = errors.New("control config resolution failed")
+	ErrProxyTarget         = errors.New("proxy target not configured")
+	ErrAdapterNotRegistered = errors.New("adapter not found in registry")
 )
+
+// ErrAdapterNotFound is returned when a requested adapter name is not registered.
+type ErrAdapterNotFound struct {
+	Name string
+}
+
+func (e *ErrAdapterNotFound) Error() string {
+	return fmt.Sprintf("adapter %q not registered", e.Name)
+}
+
+func (e *ErrAdapterNotFound) Unwrap() error {
+	return ErrAdapterNotRegistered
+}
 
 // ControlError wraps control server HTTP errors with status code.
 type ControlError struct {
@@ -28,26 +41,4 @@ func (e *ControlError) Error() string {
 
 func (e *ControlError) Unwrap() error {
 	return ErrControlConfig
-}
-
-// IsControlError returns true if err is or wraps a ControlError.
-func IsControlError(err error) bool {
-	var ce *ControlError
-	return errors.As(err, &ce)
-}
-
-// AuthError wraps auth validation failures.
-type AuthError struct {
-	Reason string
-}
-
-func (e *AuthError) Error() string {
-	if e.Reason != "" {
-		return "auth failed: " + e.Reason
-	}
-	return "auth failed"
-}
-
-func (e *AuthError) Unwrap() error {
-	return ErrAuthFailed
 }
