@@ -1,13 +1,41 @@
 package agentruntimemcp
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 )
 
+// methods that only return definitions; config not needed
+var noConfigMethods = map[string]bool{
+	"tools/list": true,
+}
+
+// needsResolvedConfig returns true if the JSON-RPC method requires config (e.g. tools/call).
+func needsResolvedConfig(r *http.Request) bool {
+	if r.Body == nil {
+		return true
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return true
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+
+	var msg struct {
+		Method string `json:"method"`
+	}
+	if err := json.Unmarshal(body, &msg); err == nil && noConfigMethods[msg.Method] {
+		return false
+	}
+	return true
+}
+
 // Middleware wraps an HTTP handler with auth and control config resolution.
+// tools/list skips config resolution; config is only fetched for tools/call etc.
 func Middleware(configSchema map[string]any, next http.Handler) http.Handler {
 	configRequired := strings.ToLower(os.Getenv("MCP_CONFIG_FETCH_REQUIRED")) != "false"
 	controlBase := strings.TrimSpace(os.Getenv("MCP_CONTROL_SERVER_URL"))
@@ -28,7 +56,8 @@ func Middleware(configSchema map[string]any, next http.Handler) http.Handler {
 
 		cfg := ConfigView{}
 		token := extractToken(r)
-		if controlBase != "" && token != "" {
+		needConfig := needsResolvedConfig(r)
+		if controlBase != "" && token != "" && needConfig {
 			ctx := buildRuntimeContext(r)
 			resolved, err := fetchControlConfig(token, configSchema, ctx)
 			if err != nil {
@@ -41,7 +70,7 @@ func Middleware(configSchema map[string]any, next http.Handler) http.Handler {
 				cfg = resolved
 				logDebug("control config resolved successfully")
 			}
-		} else if controlBase != "" && configRequired && token == "" {
+		} else if controlBase != "" && configRequired && token == "" && needConfig {
 			logWarn("missing auth token for control config resolution")
 			http.Error(w, "missing auth token for control config resolution", http.StatusUnauthorized)
 			return
