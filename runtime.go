@@ -68,10 +68,15 @@ func RunWithConfig(cfg *ServerConfig, setup func(server *mcp.Server, configSchem
 	}
 	addr := host + ":" + strconv.Itoa(port)
 
+	stateless := cfg.Server != nil && cfg.Server.StatelessHTTP
+	opts := &mcp.StreamableHTTPOptions{
+		Stateless:    stateless,
+		JSONResponse: true,
+	}
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return server
-	}, nil)
-	handler := Middleware(configSchema, mcpHandler)
+	}, opts)
+	handler := Middleware(configSchema, mcpHandler, "")
 	handler = wrapWithTracing(cfg, handler)
 
 	log.Printf("MCP server listening on %s", addr)

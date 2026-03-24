@@ -23,7 +23,18 @@ func extractToken(r *http.Request) string {
 }
 
 func isSchemaEndpoint(r *http.Request) bool {
-	return r.Method == http.MethodGet && strings.TrimSuffix(r.URL.Path, "/") == "/mcp/config/schema"
+	return isSchemaEndpointForMount(r, "/mcp")
+}
+
+// isSchemaEndpointForMount returns true if the request is for the config schema.
+// mountPath is the MCP base path (e.g. "/mcp" or "/github/mcp"); schema is at mountPath+"/config/schema".
+func isSchemaEndpointForMount(r *http.Request, mountPath string) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	schemaPath := strings.TrimSuffix(mountPath, "/") + "/config/schema"
+	return path == schemaPath
 }
 
 // validateAuth validates token or HMAC based on env. Returns nil if auth passes.
