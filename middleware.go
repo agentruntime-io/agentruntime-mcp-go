@@ -40,7 +40,8 @@ func needsResolvedConfig(r *http.Request) bool {
 	return true
 }
 
-// Middleware wraps an HTTP handler with auth and control config resolution.
+// Middleware wraps an HTTP handler with Control config resolution when the adapter registered config keys.
+// Bearer / X-MCP-Token carries the run token for POST /mcp/config. No static ingress token env.
 // mountPath is the MCP base path (e.g. "/mcp" or "/github/mcp") for schema endpoint detection; use "" for default "/mcp".
 func Middleware(configSchema map[string]any, next http.Handler, mountPath string) http.Handler {
 	if mountPath == "" {
@@ -48,6 +49,7 @@ func Middleware(configSchema map[string]any, next http.Handler, mountPath string
 	}
 	configRequired := strings.ToLower(os.Getenv("MCP_CONFIG_FETCH_REQUIRED")) != "false"
 	controlBase := strings.TrimSpace(os.Getenv("MCP_CONTROL_SERVER_URL"))
+	wantControl := configSchemaHasKeys(configSchema)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isSchemaEndpointForMount(r, mountPath) {
@@ -57,16 +59,17 @@ func Middleware(configSchema map[string]any, next http.Handler, mountPath string
 			return
 		}
 
-		if err := validateAuth(r); err != nil {
-			logWarn("auth failed: %v", err)
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-
 		cfg := ConfigView{}
 		token := extractToken(r)
 		needConfig := needsResolvedConfig(r)
-		if controlBase != "" && token != "" && needConfig {
+
+		if wantControl && controlBase == "" && needConfig && configRequired {
+			logWarn("MCP_CONTROL_SERVER_URL is required when the adapter registers config schema keys")
+			http.Error(w, "MCP_CONTROL_SERVER_URL is required when config schema has keys", http.StatusServiceUnavailable)
+			return
+		}
+
+		if wantControl && controlBase != "" && token != "" && needConfig {
 			ctx := buildRuntimeContext(r)
 			logRuntimeContextSummary(r, ctx, needConfig)
 			resolved, err := fetchControlConfig(token, configSchema, ctx)
@@ -96,7 +99,7 @@ func Middleware(configSchema map[string]any, next http.Handler, mountPath string
 				cfg = resolved
 				logDebug("control config resolved successfully")
 			}
-		} else if controlBase != "" && configRequired && token == "" && needConfig {
+		} else if wantControl && controlBase != "" && configRequired && token == "" && needConfig {
 			logWarn("missing auth token for control config resolution")
 			http.Error(w, "missing auth token for control config resolution", http.StatusUnauthorized)
 			return

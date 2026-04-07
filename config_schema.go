@@ -87,3 +87,9 @@ func WriteSchema(sw SchemaWriter, prefix string, defs []ConfigFieldDef) {
 		sw.Add(key, d.Field)
 	}
 }
+
+// configSchemaHasKeys is true when the adapter registered at least one config field.
+// Empty registration means no Control-backed keys; Middleware skips POST /mcp/config for that adapter.
+func configSchemaHasKeys(schema map[string]any) bool {
+	return len(schema) > 0
+}
