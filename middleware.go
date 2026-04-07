@@ -3,6 +3,7 @@ package agentruntimemcp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -72,7 +73,23 @@ func Middleware(configSchema map[string]any, next http.Handler, mountPath string
 			if err != nil {
 				logError("control config fetch failed: %v", err)
 				if configRequired {
-					http.Error(w, "control config resolution failed: "+err.Error(), http.StatusUnauthorized)
+					status := http.StatusBadGateway
+					clientMsg := "control config resolution failed: " + err.Error()
+					var ce *ControlError
+					if errors.As(err, &ce) {
+						status = ce.Status
+						if hm := HumanMessageFromControlAPIBody(ce.Body); hm != "" {
+							clientMsg = "MCP control config: " + hm
+						}
+						// Control config failures are not MCP client OAuth issues; 401 makes the Go SDK report only "Unauthorized".
+						if status == http.StatusUnauthorized || status == http.StatusForbidden {
+							status = http.StatusUnprocessableEntity
+						}
+					}
+					if status < 400 || status >= 600 {
+						status = http.StatusBadGateway
+					}
+					http.Error(w, clientMsg, status)
 					return
 				}
 			} else if resolved != nil {
