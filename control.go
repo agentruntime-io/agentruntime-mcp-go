@@ -84,3 +84,23 @@ func buildRuntimeContext(r *http.Request) map[string]any {
 	}
 	return ctx
 }
+
+// logRuntimeContextSummary helps debug Control POST /mcp/config validation (e.g. missing instance_id).
+// - WARN when needConfig is true but runtime_context has neither instance_id nor server_id (likely 422 from Control).
+// - DEBUG (MCP_LOG_LEVEL=debug): path, flags, tool_name, and X-MCP-Instance-Id header length (0 = absent).
+func logRuntimeContextSummary(r *http.Request, ctx map[string]any, needConfig bool) {
+	if r == nil || ctx == nil {
+		return
+	}
+	_, hasInst := ctx["instance_id"]
+	_, hasSrv := ctx["server_id"]
+	tn, _ := ctx["tool_name"].(string)
+	headerLen := len(strings.TrimSpace(r.Header.Get(HeaderMCPInstanceID)))
+
+	if needConfig && !hasInst && !hasSrv {
+		logWarn("mcp control config: missing instance_id and server_id in runtime_context (path=%s tool_name=%s); "+
+			"send header %s or set MCP_SERVER_ID env", r.URL.Path, tn, HeaderMCPInstanceID)
+	}
+	logDebug("mcp control config: path=%s needConfig=%v instance_id_set=%v server_id_set=%v tool_name=%q %s_len=%d",
+		r.URL.Path, needConfig, hasInst, hasSrv, tn, HeaderMCPInstanceID, headerLen)
+}

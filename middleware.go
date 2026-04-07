@@ -67,6 +67,7 @@ func Middleware(configSchema map[string]any, next http.Handler, mountPath string
 		needConfig := needsResolvedConfig(r)
 		if controlBase != "" && token != "" && needConfig {
 			ctx := buildRuntimeContext(r)
+			logRuntimeContextSummary(r, ctx, needConfig)
 			resolved, err := fetchControlConfig(token, configSchema, ctx)
 			if err != nil {
 				logError("control config fetch failed: %v", err)
