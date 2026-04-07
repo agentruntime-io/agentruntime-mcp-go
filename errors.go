@@ -8,7 +8,6 @@ import (
 )
 
 var (
-	ErrAuthFailed          = errors.New("invalid or missing auth")
 	ErrConfigLoad          = errors.New("failed to load config")
 	ErrControlConfig       = errors.New("control config resolution failed")
 	ErrProxyTarget         = errors.New("proxy target not configured")
