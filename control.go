@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// HeaderMCPInstanceID is the AgentRuntime → MCP header carrying the Control mcp_server_instances UUID.
+// It is merged into POST /mcp/config runtime_context.instance_id. Matches agentruntime/mcp.HeaderMCPInstanceID.
+const HeaderMCPInstanceID = "X-MCP-Instance-Id"
+
 func fetchControlConfig(token string, configSchema map[string]any, runtimeContext map[string]any) (ConfigView, error) {
 	base := strings.TrimSuffix(os.Getenv("MCP_CONTROL_SERVER_URL"), "/")
 	if base == "" {
@@ -65,6 +69,9 @@ func fetchControlConfig(token string, configSchema map[string]any, runtimeContex
 
 func buildRuntimeContext(r *http.Request) map[string]any {
 	ctx := make(map[string]any)
+	if inst := strings.TrimSpace(r.Header.Get(HeaderMCPInstanceID)); inst != "" {
+		ctx["instance_id"] = inst
+	}
 	if id := strings.TrimSpace(os.Getenv("MCP_SERVER_ID")); id != "" {
 		ctx["server_id"] = id
 	}
