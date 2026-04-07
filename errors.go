@@ -1,8 +1,10 @@
 package agentruntimemcp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -41,4 +43,19 @@ func (e *ControlError) Error() string {
 
 func (e *ControlError) Unwrap() error {
 	return ErrControlConfig
+}
+
+// HumanMessageFromControlAPIBody returns the JSON "message" field from a Control Service error body, if present.
+func HumanMessageFromControlAPIBody(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	var m struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Message)
 }
