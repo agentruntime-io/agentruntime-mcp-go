@@ -33,6 +33,17 @@ func RegisterAdapter(name string, ctor AdapterConstructor) {
 	registry.adapters[name] = ctor
 }
 
+// ListAdapterNames returns all registered adapter names.
+func ListAdapterNames() []string {
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	names := make([]string, 0, len(registry.adapters))
+	for k := range registry.adapters {
+		names = append(names, k)
+	}
+	return names
+}
+
 // getAdapters returns adapters by name. If names is empty, returns all.
 func getAdapters(names []string) ([]Adapter, error) {
 	registry.mu.RLock()

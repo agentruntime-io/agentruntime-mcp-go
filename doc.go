@@ -4,7 +4,7 @@
 // Features:
 //   - config.yaml loading (server, auth, config schema)
 //   - Auth: token (Bearer/X-MCP-Token) or HMAC
-//   - Control config resolution (POST /mcp/config)
+//   - Control config resolution (POST /mcp/config); set MCP_LOG_LEVEL=debug for runtime_context / header diagnostics; missing instance_id/server_id logs a WARN before calling Control
 //   - Schema endpoint (GET /mcp/config/schema)
 //   - OpenTelemetry tracing (when tracing.enabled in config)
 //   - Proxy: RunProxy to forward to another MCP server with overlay
