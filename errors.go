@@ -1,12 +1,13 @@
 package agentruntimemcp
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
-	ErrAuthFailed          = errors.New("invalid or missing auth")
 	ErrConfigLoad          = errors.New("failed to load config")
 	ErrControlConfig       = errors.New("control config resolution failed")
 	ErrProxyTarget         = errors.New("proxy target not configured")
@@ -41,4 +42,19 @@ func (e *ControlError) Error() string {
 
 func (e *ControlError) Unwrap() error {
 	return ErrControlConfig
+}
+
+// HumanMessageFromControlAPIBody returns the JSON "message" field from a Control Service error body, if present.
+func HumanMessageFromControlAPIBody(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	var m struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Message)
 }

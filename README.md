@@ -52,17 +52,15 @@ func main() {
 
 ## Config
 
-Same `config.yaml` format as Python/TypeScript packages. Env overrides: `HOST`, `PORT`, `MCP_AUTH_MODE`.
+Same `config.yaml` format as Python/TypeScript packages. Env overrides: `HOST`, `PORT`, and Control-related vars (see [docs/mcp/mcp_env.md](../../docs/mcp/mcp_env.md)).
 
-## Auth modes
+## Control integration
 
-- `none`: no auth
-- `token`: `Authorization: Bearer <token>` or `X-MCP-Token`
-- `hmac`: headers `X-MCP-KeyId`, `X-MCP-Timestamp`, `X-MCP-Signature`
+- **Registration** — If your adapter adds **no** config fields via `SchemaWriter` / `WriteSchema`, the merged schema is empty and the middleware **skips** `POST /mcp/config` for that adapter (including in the router: each `/<adapter>/mcp` has its own schema).
+- **`MCP_CONTROL_SERVER_URL`** — Control base URL. Required (with a run token) when the adapter has **non-empty** schema and **`MCP_CONFIG_FETCH_REQUIRED`** is not `false`.
+- **`Authorization: Bearer`** / **`X-MCP-Token`** — run token for Control (not a static env secret).
 
-## Control config resolution
-
-Set `MCP_CONTROL_SERVER_URL`. Config is available in tool handlers via `agentmcp.ConfigFromContext(ctx)`.
+Local development for a **secretful** adapter without Control: set **`MCP_CONFIG_FETCH_REQUIRED=false`** or provide a dev Control URL. No-config adapters need no Control env.
 
 ## Proxy (library)
 
