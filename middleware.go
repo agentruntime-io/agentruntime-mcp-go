@@ -43,6 +43,12 @@ func needsResolvedConfig(r *http.Request) bool {
 // Middleware wraps an HTTP handler with Control config resolution when the adapter registered config keys.
 // Bearer / X-MCP-Token carries the run token for POST /mcp/config. No static ingress token env.
 // mountPath is the MCP base path (e.g. "/mcp" or "/github/mcp") for schema endpoint detection; use "" for default "/mcp".
+//
+// Config resolution order for tools/call (and other methods that need config):
+//  1. Resolve Control when URL + token are present (subject to MCP_CONFIG_FETCH_REQUIRED for hard failures).
+//  2. Merge environment variables for each schema key (case-insensitive names: key or AR_<key>).
+//     Env wins on key clash with Control.
+//  3. If Control fails or is skipped but env supplies all required keys, the request still proceeds.
 func Middleware(configSchema map[string]any, next http.Handler, mountPath string) http.Handler {
 	if mountPath == "" {
 		mountPath = "/mcp"
@@ -63,49 +69,57 @@ func Middleware(configSchema map[string]any, next http.Handler, mountPath string
 		token := extractToken(r)
 		needConfig := needsResolvedConfig(r)
 
-		if wantControl && controlBase == "" && needConfig && configRequired {
-			logWarn("MCP_CONTROL_SERVER_URL is required when the adapter registers config schema keys")
-			http.Error(w, "MCP_CONTROL_SERVER_URL is required when config schema has keys", http.StatusServiceUnavailable)
-			return
-		}
+		envIdx := newLowercaseEnvIndex()
+		envKeys := envOverridesFromSchema(configSchema, envIdx)
 
-		if wantControl && controlBase != "" && token != "" && needConfig {
-			ctx := buildRuntimeContext(r)
-			logRuntimeContextSummary(r, ctx, needConfig)
-			resolved, err := fetchControlConfig(token, configSchema, ctx)
-			if err != nil {
-				logError("control config fetch failed: %v", err)
-				if configRequired {
-					status := http.StatusBadGateway
-					clientMsg := "control config resolution failed: " + err.Error()
-					var ce *ControlError
-					if errors.As(err, &ce) {
-						status = ce.Status
-						if hm := HumanMessageFromControlAPIBody(ce.Body); hm != "" {
-							clientMsg = "MCP control config: " + hm
+		if wantControl && needConfig {
+			tryControl := controlBase != "" && token != ""
+
+			if tryControl {
+				ctx := buildRuntimeContext(r)
+				logRuntimeContextSummary(r, ctx, needConfig)
+				resolved, err := fetchControlConfig(token, configSchema, ctx)
+				if err != nil {
+					logError("control config fetch failed: %v", err)
+					if configRequired && !envAloneSatisfiesRequired(configSchema, envIdx) {
+						status := http.StatusBadGateway
+						clientMsg := "control config resolution failed: " + err.Error()
+						var ce *ControlError
+						if errors.As(err, &ce) {
+							status = ce.Status
+							if hm := HumanMessageFromControlAPIBody(ce.Body); hm != "" {
+								clientMsg = "MCP control config: " + hm
+							}
+							if status == http.StatusUnauthorized || status == http.StatusForbidden {
+								status = http.StatusUnprocessableEntity
+							}
 						}
-						// Control config failures are not MCP client OAuth issues; 401 makes the Go SDK report only "Unauthorized".
-						if status == http.StatusUnauthorized || status == http.StatusForbidden {
-							status = http.StatusUnprocessableEntity
+						if status < 400 || status >= 600 {
+							status = http.StatusBadGateway
 						}
+						http.Error(w, clientMsg, status)
+						return
 					}
-					if status < 400 || status >= 600 {
-						status = http.StatusBadGateway
-					}
-					http.Error(w, clientMsg, status)
+				} else if resolved != nil {
+					cfg = resolved
+					logDebug("control config resolved successfully")
+				}
+			} else {
+				if controlBase == "" && configRequired && !envAloneSatisfiesRequired(configSchema, envIdx) {
+					logWarn("MCP_CONTROL_SERVER_URL is required when the adapter registers config schema keys")
+					http.Error(w, "MCP_CONTROL_SERVER_URL is required when config schema has keys", http.StatusServiceUnavailable)
 					return
 				}
-			} else if resolved != nil {
-				cfg = resolved
-				logDebug("control config resolved successfully")
+				if controlBase != "" && token == "" && configRequired && !envAloneSatisfiesRequired(configSchema, envIdx) {
+					logWarn("missing auth token for control config resolution")
+					http.Error(w, "missing auth token for control config resolution", http.StatusUnauthorized)
+					return
+				}
 			}
-		} else if wantControl && controlBase != "" && configRequired && token == "" && needConfig {
-			logWarn("missing auth token for control config resolution")
-			http.Error(w, "missing auth token for control config resolution", http.StatusUnauthorized)
-			return
 		}
 
-		r = r.WithContext(WithConfig(r.Context(), cfg))
+		finalCfg := mergeControlWithEnvPriority(cfg, envKeys, configSchema)
+		r = r.WithContext(WithConfig(r.Context(), finalCfg))
 		next.ServeHTTP(w, r)
 	})
 }
