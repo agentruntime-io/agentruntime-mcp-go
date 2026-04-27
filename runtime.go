@@ -69,10 +69,7 @@ func RunWithConfig(cfg *ServerConfig, setup func(server *mcp.Server, configSchem
 	addr := host + ":" + strconv.Itoa(port)
 
 	stateless := cfg.Server != nil && cfg.Server.StatelessHTTP
-	opts := &mcp.StreamableHTTPOptions{
-		Stateless:    stateless,
-		JSONResponse: true,
-	}
+	opts := newStreamableHTTPOptions(stateless)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(req *http.Request) *mcp.Server {
 		return server
 	}, opts)
@@ -103,4 +100,16 @@ func MakeServer(cfg *ServerConfig) (*mcp.Server, map[string]any) {
 	}, nil)
 
 	return server, configSchema
+}
+
+// newStreamableHTTPOptions configures the go-sdk streamable handler.
+// When listening on loopback behind ngrok (or similar), the Host header is the public
+// hostname; go-sdk v1.4+ rejects that unless localhost DNS-rebinding protection is off.
+// Set MCP_DISABLE_LOCALHOST_PROTECTION=true, or MCPGODEBUG=disablelocalhostprotection=1 (go-sdk).
+func newStreamableHTTPOptions(stateless bool) *mcp.StreamableHTTPOptions {
+	return &mcp.StreamableHTTPOptions{
+		Stateless:                  stateless,
+		JSONResponse:               true,
+		DisableLocalhostProtection: envBoolTrue("MCP_DISABLE_LOCALHOST_PROTECTION"),
+	}
 }

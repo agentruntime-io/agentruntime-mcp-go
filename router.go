@@ -28,10 +28,7 @@ func HandlerForAdapter(configPath, adapterName, mountPath string) (http.Handler,
 	}
 
 	stateless := cfg.Server != nil && cfg.Server.StatelessHTTP
-	opts := &mcp.StreamableHTTPOptions{
-		Stateless:    stateless,
-		JSONResponse: true,
-	}
+	opts := newStreamableHTTPOptions(stateless)
 	mcpHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		return server
 	}, opts)
