@@ -77,7 +77,9 @@ func NewSchemaWriter(into map[string]any) SchemaWriter {
 	return &schemaWriter{into: into}
 }
 
-// WriteSchema writes defs to sw. prefix is prepended to each key (e.g. "resend_" for router).
+// WriteSchema writes defs to sw, prepending prefix to each def.Key (prefix + d.Key).
+// Use "" when the Control catalog uses bare field names; use a non-empty prefix (e.g.
+// "github_") to namespace keys in a combined schema. Do not bake prefix into def.Key.
 func WriteSchema(sw SchemaWriter, prefix string, defs []ConfigFieldDef) {
 	if sw == nil {
 		return
