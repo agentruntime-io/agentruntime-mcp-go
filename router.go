@@ -57,6 +57,18 @@ func RunWithRouter(configPath string) error {
 		}
 		mux.Handle(mountPath, h)
 		mux.Handle(mountPath+"/", h)
+
+		// Register optional vendor-webhook routes for adapters that implement
+		// WebhookAdapter (e.g. GitHub, Slack). Adapters that don't are unaffected.
+		adps, err := getAdapters([]string{name})
+		if err != nil {
+			return err
+		}
+		for _, adp := range adps {
+			if wa, ok := adp.(WebhookAdapter); ok {
+				wa.RegisterWebhook(mux)
+			}
+		}
 	}
 
 	host := "127.0.0.1"

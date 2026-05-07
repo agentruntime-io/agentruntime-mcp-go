@@ -1,6 +1,7 @@
 package agentruntimemcp
 
 import (
+	"net/http"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -10,6 +11,22 @@ import (
 // Implement this interface for each connector. Use RegisterAdapter in init().
 type Adapter interface {
 	Register(server *mcp.Server, schema SchemaWriter)
+}
+
+// WebhookAdapter may be implemented alongside Adapter by connectors that receive
+// vendor webhooks (GitHub, Slack, Stripe, etc.) and forward them to Mode B on the BFF.
+//
+// RunWithRouter calls RegisterWebhook for every adapter that implements this interface,
+// passing the shared HTTP mux so the adapter can register its own plain-HTTP route
+// (e.g. mux.HandleFunc("/github/webhook", ...)) alongside the MCP route.
+//
+// Implementing this interface is entirely optional — adapters that only expose MCP
+// tools are not affected.
+//
+// Inside the registered handler, use SignModeB / DeliverModeB to forward the
+// verified vendor payload to the BFF as a canonical Mode B delivery.
+type WebhookAdapter interface {
+	RegisterWebhook(mux *http.ServeMux)
 }
 
 // AdapterConstructorInput is passed to adapter constructors. Reserved for future use.
