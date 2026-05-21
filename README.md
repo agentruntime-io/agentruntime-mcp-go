@@ -101,3 +101,7 @@ agentmcp.RunWithRegistry("config.yaml", "resend")
 Example MCP server using this SDK:
 
 - [connectors/go-connectors/resend-connector](../../connectors/go-connectors/resend-connector/) – Resend (send_email, list_audiences)
+
+## Releasing
+
+See [`../RELEASE.md`](../RELEASE.md) (Go section): lightweight Git tags (`git tag v0.1.2`), then `go get github.com/agentruntime-io/agentruntime-mcp-go@v0.1.2` in connectors — [`connectors/go-connectors/README.md`](../../connectors/go-connectors/README.md).
