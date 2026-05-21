@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-// SignModeB returns the X-Agentruntime-Signature header value for a Mode B delivery.
+// SignModeB returns the X-Agentruntime-Signature header value for signed ingress:
+// POST /v1/inbound-webhooks/{id}. (Go name retained; product term: signed ingress, formerly "Mode B".)
 //
 // The signature is HMAC-SHA256 over strconv.FormatInt(unix, 10) + "." + body,
 // matching go-wheelhouse/pkg/workflowwebhookdelivery SignBody and BFF
@@ -26,7 +27,7 @@ func SignModeB(signingSecret string, body []byte, unix int64) string {
 	return fmt.Sprintf("t=%d,v1=%s", unix, hex.EncodeToString(mac.Sum(nil)))
 }
 
-// ModeBRequest holds parameters for one Mode B delivery to the BFF.
+// ModeBRequest holds parameters for one signed-ingress POST to the BFF (type name retained).
 type ModeBRequest struct {
 	// BFFBaseURL is the platform BFF base URL (e.g. "https://api.example.com").
 	BFFBaseURL string
@@ -51,8 +52,9 @@ type ModeBRequest struct {
 	ContentType string
 }
 
-// DeliverModeB forwards body to POST /v1/inbound-webhooks/{SubscriptionID} on the
-// BFF with a valid X-Agentruntime-Signature and Idempotency-Key header.
+// DeliverModeB forwards body to the BFF signed ingress route
+// POST /v1/inbound-webhooks/{SubscriptionID} with X-Agentruntime-Signature and Idempotency-Key.
+// Go API name kept for compatibility (DeliverModeB).
 //
 // Returns the raw *http.Response (caller must close Body) or an error if the HTTP
 // request could not be sent. Non-2xx BFF responses are not treated as errors —
