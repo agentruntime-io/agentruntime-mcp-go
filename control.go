@@ -16,10 +16,20 @@ import (
 // It is merged into POST /mcp/config runtime_context.instance_id. Matches agentruntime/mcp.HeaderMCPInstanceID.
 const HeaderMCPInstanceID = "X-MCP-Instance-Id"
 
-func fetchControlConfig(token string, configSchema map[string]any, runtimeContext map[string]any) (ConfigView, error) {
+// HeaderMCPServerID is set by Control discover/validate probes so /bridge/mcp can resolve catalog server_id.
+const HeaderMCPServerID = "X-MCP-Server-Id"
+
+// ControlPayload is the decoded POST /mcp/config response used by bridge mode.
+type ControlPayload struct {
+	Config       ConfigView
+	ConfigSchema map[string]any
+	Bridge       map[string]any
+}
+
+func fetchControlPayload(token string, configSchema map[string]any, runtimeContext map[string]any) (*ControlPayload, error) {
 	base := strings.TrimSuffix(os.Getenv("MCP_CONTROL_SERVER_URL"), "/")
 	if base == "" {
-		return nil, nil
+		return &ControlPayload{Config: ConfigView{}}, nil
 	}
 	timeoutSec := 5
 	if s := os.Getenv("MCP_CONTROL_TIMEOUT_SEC"); s != "" {
@@ -58,19 +68,37 @@ func fetchControlConfig(token string, configSchema map[string]any, runtimeContex
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, fmt.Errorf("%w: invalid response: %v", ErrControlConfig, err)
 	}
+	out := &ControlPayload{}
 	if c, ok := data["config"].(map[string]any); ok {
-		return ConfigView(c), nil
+		out.Config = ConfigView(c)
 	}
-	if d, ok := data["data"].(map[string]any); ok {
-		return ConfigView(d), nil
+	if cs, ok := data["config_schema"].(map[string]any); ok {
+		out.ConfigSchema = cs
 	}
-	return ConfigView(data), nil
+	if b, ok := data["bridge"].(map[string]any); ok {
+		out.Bridge = b
+	}
+	return out, nil
+}
+
+func fetchControlConfig(token string, configSchema map[string]any, runtimeContext map[string]any) (ConfigView, error) {
+	p, err := fetchControlPayload(token, configSchema, runtimeContext)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil || p.Config == nil {
+		return ConfigView{}, nil
+	}
+	return p.Config, nil
 }
 
 func buildRuntimeContext(r *http.Request) map[string]any {
 	ctx := make(map[string]any)
 	if inst := strings.TrimSpace(r.Header.Get(HeaderMCPInstanceID)); inst != "" {
 		ctx["instance_id"] = inst
+	}
+	if sid := strings.TrimSpace(r.Header.Get(HeaderMCPServerID)); sid != "" {
+		ctx["server_id"] = sid
 	}
 	if id := strings.TrimSpace(os.Getenv("MCP_SERVER_ID")); id != "" {
 		ctx["server_id"] = id

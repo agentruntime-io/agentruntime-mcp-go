@@ -74,6 +74,7 @@ func RunWithConfig(cfg *ServerConfig, setup func(server *mcp.Server, configSchem
 		return server
 	}, opts)
 	handler := Middleware(configSchema, mcpHandler, "")
+	handler = ForwardIdentityHeaders(handler)
 	handler = wrapWithTracing(cfg, handler)
 
 	log.Printf("MCP server listening on %s", addr)

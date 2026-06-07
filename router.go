@@ -49,6 +49,14 @@ func RunWithRouter(configPath string) error {
 	}
 
 	mux := http.NewServeMux()
+	if bridgeHandler, err := HandlerForBridge(configPath); err != nil {
+		return err
+	} else {
+		mux.Handle(BridgeMountPath, bridgeHandler)
+		mux.Handle(BridgeMountPath+"/", bridgeHandler)
+		log.Printf("MCP bridge route registered at %s", BridgeMountPath)
+	}
+
 	for _, name := range names {
 		mountPath := "/" + name + "/mcp"
 		h, err := HandlerForAdapter(configPath, name, mountPath)
