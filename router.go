@@ -33,6 +33,8 @@ func HandlerForAdapter(configPath, adapterName, mountPath string) (http.Handler,
 		return server
 	}, opts)
 	handler := Middleware(configSchema, mcpHandler, mountPath)
+	handler = ForwardIdentityHeaders(handler)
+	handler = ForwardRequestBearer(handler)
 	return wrapWithTracing(cfg, handler), nil
 }
 

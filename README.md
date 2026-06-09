@@ -62,6 +62,10 @@ Same `config.yaml` format as Python/TypeScript packages. Env overrides: `HOST`, 
 
 Local development for a **secretful** adapter without Control: set **`MCP_CONFIG_FETCH_REQUIRED=false`** or provide a dev Control URL. No-config adapters need no Control env.
 
+## Per-request bearer forwarding
+
+`ForwardRequestBearer` middleware (wired in `RunWithConfig`, `HandlerForAdapter`, and bridge handlers) copies the incoming MCP caller’s **`Authorization: Bearer`** or **`X-MCP-Token`** into request context. Downstream HTTP clients read it via **`RequestBearerFromContext(ctx)`** — used by Platform MCP to forward each caller’s PAT to the BFF.
+
 ## Proxy (library)
 
 ```go

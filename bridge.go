@@ -22,6 +22,7 @@ func HandlerForBridge(configPath string) (http.Handler, error) {
 	}
 	var h http.Handler = http.HandlerFunc(bridgeHTTPHandler)
 	h = ForwardIdentityHeaders(h)
+	h = ForwardRequestBearer(h)
 	return wrapWithTracing(cfg, h), nil
 }
 
