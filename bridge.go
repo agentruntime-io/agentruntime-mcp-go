@@ -65,13 +65,13 @@ func bridgeHTTPHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONRPCResponse(w, reqID, nil, jsonRPCErr(-32603, bridgeControlErr(err)))
 		return
 	}
-	upstream, authMap, err := bridgeTargetFromPayload(payload)
+	upstream, err := bridgeUpstreamFromPayload(payload)
 	if err != nil {
 		writeJSONRPCResponse(w, reqID, nil, jsonRPCErr(-32603, err.Error()))
 		return
 	}
 
-	authHdr, err := ApplyAuthMapping(payload.Config, authMap)
+	authHdr, err := ApplyBridgeHeaders(payload.Config, payload.Bridge)
 	if err != nil {
 		writeJSONRPCResponse(w, reqID, nil, jsonRPCErr(-32603, "upstream auth: "+err.Error()))
 		return
@@ -127,18 +127,15 @@ func serveBridgeSchema(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(schema)
 }
 
-func bridgeTargetFromPayload(payload *ControlPayload) (upstream string, authMap map[string]any, err error) {
+func bridgeUpstreamFromPayload(payload *ControlPayload) (string, error) {
 	if payload == nil || payload.Bridge == nil {
-		return "", nil, fmt.Errorf("server is not configured for bridge mode (missing metadata.bridge upstream_url)")
+		return "", fmt.Errorf("server is not configured for bridge mode (missing metadata.bridge upstream_url)")
 	}
-	upstream = strings.TrimSpace(stringFromMap(payload.Bridge, "upstream_url"))
+	upstream := strings.TrimSpace(stringFromMap(payload.Bridge, "upstream_url"))
 	if upstream == "" {
-		return "", nil, fmt.Errorf("bridge upstream_url is not set on mcp_servers.metadata")
+		return "", fmt.Errorf("bridge upstream_url is not set on mcp_servers.metadata")
 	}
-	if am, ok := payload.Bridge["auth_mapping"].(map[string]any); ok {
-		authMap = am
-	}
-	return upstream, authMap, nil
+	return upstream, nil
 }
 
 func bridgePost(targetURL string, payload map[string]any, extra http.Header) (map[string]any, error) {
