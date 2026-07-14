@@ -105,6 +105,23 @@ agentmcp.RunWithRegistry("config.yaml", "resend")
 Example MCP server using this SDK:
 
 - [connectors/go-connectors/resend-connector](../../connectors/go-connectors/resend-connector/) – Resend (send_email, list_audiences)
+- [connectors/go-connectors/clickup-connector](../../connectors/go-connectors/clickup-connector/) – ClickUp (69 tools, uses `toolorg`)
+
+## Tool organization (`toolorg`)
+
+Large connectors declare palette groups in the **publish payload** via the **`toolorg`** subpackage. Wire-name helpers run at registration/publish time only — not at catalog read. See [docs/mcp/MCP_TOOL_ORGANIZATION.md](../../docs/mcp/MCP_TOOL_ORGANIZATION.md).
+
+```go
+import "github.com/agentruntime-io/agentruntime-mcp-go/toolorg"
+
+// Called when building the catalog publish payload:
+meta := toolorg.PublisherMetadata("clickup_get_task", toolorg.Metadata{})
+// → display_name, suggested_group, suggested_tags for mcp_tools.metadata
+```
+
+External MCP servers without publish metadata rely on sysadmin **Tool organization** for grouping.
+
+Details: [toolorg/README.md](./toolorg/README.md).
 
 ## Releasing
 
