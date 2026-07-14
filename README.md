@@ -125,4 +125,4 @@ Details: [toolorg/README.md](./toolorg/README.md).
 
 ## Releasing
 
-See [`../RELEASE.md`](../RELEASE.md) (Go section): lightweight Git tags (`git tag v0.1.2`), then `go get github.com/agentruntime-io/agentruntime-mcp-go@v0.1.2` in connectors — [`connectors/go-connectors/README.md`](../../connectors/go-connectors/README.md).
+See [`../RELEASE.md`](../RELEASE.md) (Go section): lightweight Git tags (`git tag v0.3.2`), then `go get github.com/agentruntime-io/agentruntime-mcp-go@v0.3.2` in connectors — [`connectors/go-connectors/README.md`](../../connectors/go-connectors/README.md).
