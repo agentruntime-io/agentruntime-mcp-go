@@ -42,6 +42,9 @@ func TestRegister_descriptionsNoEllipsis(t *testing.T) {
 | `ParseRegisterToolNames` | Extract wire names from `register.go` source |
 | `ValidateWireNames` | Vendor prefix, resource segment, top-level allowlist, forbidden removed tools |
 | `ValidateToolCount` | Assert tool count in range (catch accidental add/remove) |
+| `ParseHeldToolNames` | Extract wires with `Hold: true` or `WithHold()` from `register.go` |
+| `PublishableNames` | Registered names minus held |
+| `ValidateCatalogExcludesHeld` | Fail when a held wire appears in catalog JSON names |
 | `ValidateDescriptionsNoEllipsis` | Fail when `Description` uses `...` in API paths (SOP §9.2) |
 | `AssertStringPropertyMinLength` | Assert one schema property has `minLength` |
 | `AssertRequiredStringIDsHaveMinLength` | Fail when a required `*_id` string lacks `minLength=1` |

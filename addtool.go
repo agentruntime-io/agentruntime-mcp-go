@@ -8,9 +8,20 @@ import (
 )
 
 // AddTool registers an MCP tool with input schema inferred from the handler's In type.
-// When Tool.InputSchema is nil, builds schema via toolschema.For[In], which applies
-// agentschema struct tags (minLength, maxLength) in addition to json/jsonschema tags.
-func AddTool[In, Out any](server *mcp.Server, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+// Pass *ToolDef (preferred; supports Hold) or *mcp.Tool (legacy; use WithHold() for hold).
+// When InputSchema is nil, builds schema via toolschema.For[In].
+//
+// Held tools are still registered on the MCP server (dev tools/list); catalog generators
+// should omit tools where hold is true.
+func AddTool[In, Out any](server *mcp.Server, tool any, h mcp.ToolHandlerFor[In, Out], opts ...ToolOption) {
+	def := toolDefFromArg(tool, opts...)
+	recordToolRegistration(def)
+
+	t := &mcp.Tool{
+		Name:        def.Name,
+		Description: def.Description,
+		InputSchema: def.InputSchema,
+	}
 	if t.InputSchema == nil {
 		schema, err := toolschema.For[In](nil)
 		if err != nil {
