@@ -42,6 +42,10 @@ Builds MCP tool JSON Schemas from Go input/output structs with optional field co
 
 | `format` | string (metadata) | `format=email` |
 
+| `enum` | string (comma-separated) | `enum=opt_in,opt_out` |
+
+| `default` | explicit default when arg omitted | `default=30`, `default=contacts.csv` |
+
 
 
 Combine with commas: `agentschema:"minLength=1,maxLength=64"`.
@@ -109,4 +113,6 @@ Use `minLength=1` on required IDs when empty string should fail. Do **not** set 
 
 
 `format` is emitted in schema for documentation/clients; platform validation focuses on length, numeric bounds, and `pattern`.
+
+**`enum` and `default`** are supported in `agentschema`. Enum values are comma-separated (`enum=opt_in,opt_out`). Defaults are explicit only (`default=30`); Go zero values are never inferred automatically. See [TOOL_ARG_VALIDATION.md](../../../connectors/docs/TOOL_ARG_VALIDATION.md).
 

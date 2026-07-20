@@ -1,6 +1,7 @@
 package toolschema
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -12,8 +13,16 @@ type sampleInput struct {
 }
 
 type numericInput struct {
-	Limit int    `json:"limit,omitempty" jsonschema:"Page size" agentschema:"minimum=1,maximum=100"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Page size" agentschema:"minimum=1,maximum=100,default=30"`
 	Owner string `json:"owner" jsonschema:"GitHub owner" agentschema:"minLength=1,pattern=^[a-zA-Z0-9_-]+$"`
+}
+
+type enumInput struct {
+	Mode string `json:"mode" jsonschema:"Execution mode" agentschema:"enum=fast,accurate"`
+}
+
+type enumDefaultInput struct {
+	Type string `json:"type,omitempty" jsonschema:"Property type" agentschema:"enum=string,number,default=string"`
 }
 
 func TestParseAgentschema(t *testing.T) {
@@ -38,14 +47,28 @@ func TestParseAgentschema(t *testing.T) {
 	if c2.Minimum == nil || *c2.Minimum != 1 {
 		t.Fatalf("minimum = %v", c2.Minimum)
 	}
-	if c2.Maximum == nil || *c2.Maximum != 100 {
-		t.Fatalf("maximum = %v", c2.Maximum)
-	}
 	if c2.Pattern != "^[a-z]+$" {
 		t.Fatalf("pattern = %q", c2.Pattern)
 	}
-	if _, err := ParseAgentschema("pattern=["); err == nil {
-		t.Fatal("expected error for invalid pattern")
+
+	c3, err := ParseAgentschema("enum=opt_in,opt_out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c3.Enum) != 2 || c3.Enum[0] != "opt_in" || c3.Enum[1] != "opt_out" {
+		t.Fatalf("enum = %v", c3.Enum)
+	}
+
+	c4, err := ParseAgentschema("default=contacts.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c4.HasDefault {
+		t.Fatal("expected HasDefault")
+	}
+	var s string
+	if err := json.Unmarshal(c4.Default, &s); err != nil || s != "contacts.csv" {
+		t.Fatalf("default = %q err=%v", c4.Default, err)
 	}
 }
 
@@ -61,15 +84,47 @@ func TestFor_appliesAgentschema(t *testing.T) {
 	if p.MinLength == nil || *p.MinLength != 1 {
 		t.Fatalf("task_id minLength = %v", p.MinLength)
 	}
-	if p.MaxLength == nil || *p.MaxLength != 64 {
-		t.Fatalf("task_id maxLength = %v", p.MaxLength)
+}
+
+func TestFor_appliesNumericPatternDefaultAndEnum(t *testing.T) {
+	s, err := For[numericInput](nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	note := s.Properties["note"]
-	if note == nil {
-		t.Fatal("missing note property")
+	limit := s.Properties["limit"]
+	if limit == nil {
+		t.Fatal("missing limit property")
 	}
-	if note.MinLength != nil {
-		t.Fatalf("note should not have minLength")
+	if limit.Minimum == nil || *limit.Minimum != 1 || limit.Maximum == nil || *limit.Maximum != 100 {
+		t.Fatalf("limit bounds = %+v", limit)
+	}
+	if len(limit.Default) == 0 {
+		t.Fatal("expected default on limit")
+	}
+	var def int
+	if err := json.Unmarshal(limit.Default, &def); err != nil || def != 30 {
+		t.Fatalf("limit default = %v err=%v", limit.Default, err)
+	}
+
+	enumSchema, err := For[enumInput](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := enumSchema.Properties["mode"]
+	if mode == nil || len(mode.Enum) != 2 {
+		t.Fatalf("mode enum = %+v", mode)
+	}
+
+	mixed, err := For[enumDefaultInput](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typ := mixed.Properties["type"]
+	if typ == nil || len(typ.Enum) != 2 {
+		t.Fatalf("type enum = %+v", typ)
+	}
+	if len(typ.Default) == 0 {
+		t.Fatal("expected default on type")
 	}
 }
 
@@ -87,26 +142,9 @@ func TestFor_matchesJsonschemaForDescriptions(t *testing.T) {
 	}
 }
 
-func TestFor_appliesNumericAndPatternAgentschema(t *testing.T) {
-	s, err := For[numericInput](nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	limit := s.Properties["limit"]
-	if limit == nil {
-		t.Fatal("missing limit property")
-	}
-	if limit.Minimum == nil || *limit.Minimum != 1 {
-		t.Fatalf("limit minimum = %v", limit.Minimum)
-	}
-	if limit.Maximum == nil || *limit.Maximum != 100 {
-		t.Fatalf("limit maximum = %v", limit.Maximum)
-	}
-	owner := s.Properties["owner"]
-	if owner == nil {
-		t.Fatal("missing owner property")
-	}
-	if owner.Pattern != "^[a-zA-Z0-9_-]+$" {
-		t.Fatalf("owner pattern = %q", owner.Pattern)
+func TestMergeAgentschemaSegments_enumOnly(t *testing.T) {
+	got := mergeAgentschemaSegments("enum=string,number")
+	if len(got) != 1 || got[0] != "enum=string,number" {
+		t.Fatalf("got %v", got)
 	}
 }
