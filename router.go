@@ -24,7 +24,7 @@ func HandlerForAdapter(configPath, adapterName, mountPath string) (http.Handler,
 	server, configSchema := MakeServer(cfg)
 	sw := NewSchemaWriter(configSchema)
 	for _, a := range adapters {
-		a.Register(server, sw)
+		PrepareAdapterRegistration(server, sw, a.Register)
 	}
 
 	stateless := cfg.Server != nil && cfg.Server.StatelessHTTP
