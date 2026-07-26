@@ -95,3 +95,31 @@ func TestMiddleware_InitializeSkipsConfigMergePath(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 }
+
+func TestMiddleware_ListToolsCallSkipsConfig(t *testing.T) {
+	t.Setenv("MCP_CONFIG_FETCH_REQUIRED", "true")
+	t.Setenv("MCP_CONTROL_SERVER_URL", "")
+
+	schema := map[string]any{
+		"api_key": map[string]any{"type": "string", "required": true},
+	}
+
+	called := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	h := Middleware(schema, next, "/mcp")
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_tools","arguments":{}}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if !called {
+		t.Fatal("next not called")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+}

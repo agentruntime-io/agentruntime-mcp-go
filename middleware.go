@@ -30,11 +30,18 @@ func needsResolvedConfig(r *http.Request) bool {
 
 	var msg struct {
 		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
 	}
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return true
 	}
 	if noConfigMethods[msg.Method] {
+		return false
+	}
+	// Sysadmin discover calls list_tools via tools/call without tenant config/instance.
+	if msg.Method == "tools/call" && strings.TrimSpace(msg.Params.Name) == "list_tools" {
 		return false
 	}
 	return true
