@@ -40,10 +40,6 @@ func needsResolvedConfig(r *http.Request) bool {
 	if noConfigMethods[msg.Method] {
 		return false
 	}
-	// Sysadmin discover calls list_tools via tools/call without tenant config/instance.
-	if msg.Method == "tools/call" && strings.TrimSpace(msg.Params.Name) == "list_tools" {
-		return false
-	}
 	return true
 }
 

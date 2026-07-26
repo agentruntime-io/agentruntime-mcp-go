@@ -11,11 +11,14 @@ import (
 // Pass *ToolDef (preferred; supports Hold) or *mcp.Tool (legacy; use WithHold() for hold).
 // When InputSchema is nil, builds schema via toolschema.For[In].
 //
-// Held tools are still registered on the MCP server (dev tools/list); catalog generators
-// should omit tools where hold is true.
+// Held tools are recorded in the hold registry for CI/catalog but omitted from the MCP wire
+// (tools/list). Catalog generators should omit tools where hold is true.
 func AddTool[In, Out any](server *mcp.Server, tool any, h mcp.ToolHandlerFor[In, Out], opts ...ToolOption) {
 	def := toolDefFromArg(tool, opts...)
 	recordToolRegistration(def)
+	if def.Hold {
+		return
+	}
 
 	t := &mcp.Tool{
 		Name:        def.Name,

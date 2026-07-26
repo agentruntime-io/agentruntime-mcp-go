@@ -37,8 +37,9 @@ func RunWithRegistry(configPath string, adapterNames ...string) error {
 	}
 	return RunWithConfig(cfg, func(server *mcp.Server, schema map[string]any) {
 		sw := NewSchemaWriter(schema)
+		ResetToolRegistry()
 		for _, a := range adapters {
-			PrepareAdapterRegistration(server, sw, a.Register)
+			a.Register(server, sw)
 		}
 	})
 }
