@@ -35,6 +35,10 @@ func HandlerForAdapter(configPath, adapterName, mountPath string) (http.Handler,
 	handler := Middleware(configSchema, mcpHandler, mountPath)
 	handler = ForwardIdentityHeaders(handler)
 	handler = ForwardRequestBearer(handler)
+	oauthCfg := OAuthConfigFromEnv()
+	if oauthCfg.Enabled() {
+		handler = OAuthMiddleware(oauthCfg, mountPath, newJWTVerifier(oauthCfg.Issuer, oauthCfg.Audience, oauthCfg.JWKSURL), handler)
+	}
 	return wrapWithTracing(cfg, handler), nil
 }
 

@@ -62,7 +62,12 @@ func fetchControlPayload(token string, configSchema map[string]any, runtimeConte
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &ControlError{Status: resp.StatusCode, Body: string(bodyBytes)}
+		bodyStr := string(bodyBytes)
+		return nil, &ControlError{
+			Status:        resp.StatusCode,
+			Body:          bodyStr,
+			RetryAfterSec: parseRetryAfterHeader(resp.Header.Get("Retry-After"), bodyStr),
+		}
 	}
 	var data map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
@@ -82,14 +87,17 @@ func fetchControlPayload(token string, configSchema map[string]any, runtimeConte
 }
 
 func fetchControlConfig(token string, configSchema map[string]any, runtimeContext map[string]any) (ConfigView, error) {
-	p, err := fetchControlPayload(token, configSchema, runtimeContext)
-	if err != nil {
-		return nil, err
+	return fetchControlConfigCached(token, configSchema, runtimeContext)
+}
+
+func parseRetryAfterHeader(headerValue, body string) int {
+	headerValue = strings.TrimSpace(headerValue)
+	if headerValue != "" {
+		if sec, err := strconv.Atoi(headerValue); err == nil && sec > 0 {
+			return sec
+		}
 	}
-	if p == nil || p.Config == nil {
-		return ConfigView{}, nil
-	}
-	return p.Config, nil
+	return retryAfterFromControlBody(body)
 }
 
 func buildRuntimeContext(r *http.Request) map[string]any {

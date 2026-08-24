@@ -77,6 +77,10 @@ func RunWithConfig(cfg *ServerConfig, setup func(server *mcp.Server, configSchem
 	handler := Middleware(configSchema, mcpHandler, "")
 	handler = ForwardIdentityHeaders(handler)
 	handler = ForwardRequestBearer(handler)
+	oauthCfg := OAuthConfigFromEnv()
+	if oauthCfg.Enabled() {
+		handler = OAuthMiddleware(oauthCfg, "/mcp", newJWTVerifier(oauthCfg.Issuer, oauthCfg.Audience, oauthCfg.JWKSURL), handler)
+	}
 	handler = wrapWithTracing(cfg, handler)
 
 	log.Printf("MCP server listening on %s", addr)
