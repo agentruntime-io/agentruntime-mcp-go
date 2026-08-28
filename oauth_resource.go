@@ -24,13 +24,9 @@ func OAuthProtectedResourceHandler(cfg OAuthConfig) http.Handler {
 			return
 		}
 		payload := map[string]any{
-			"resource":              cfg.ResourceURL,
-			"authorization_servers": cfg.AuthorizationServers,
-			"scopes_supported": []string{
-				"openid", "profile", "email",
-				"mcp:execute", "mcp:read",
-				"workflow:read", "workflow:run",
-			},
+			"resource":                 cfg.ResourceURL,
+			"authorization_servers":    cfg.AuthorizationServers,
+			"scopes_supported":         OAuthScopesSupported,
 			"bearer_methods_supported": []string{"header"},
 		}
 		if doc := strings.TrimSpace(cfg.ResourceDocumentation); doc != "" {
