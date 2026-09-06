@@ -14,13 +14,18 @@ Adds the `relay` package and wires it into `RunWithRouter` for self-hosted MCP c
 
 ### Env vars (router)
 
+One canonical name per setting — see `relay/env.go` (`LoadRouterEnv` / `ServerConfigFromEnv`).
+
 | Variable | Purpose |
 |----------|---------|
-| `RELAY_AUTH_TOKEN` | Optional bearer for WSS connect |
-| `RELAY_PUBLIC_BASE_URL` | Canonical URL prefix for MCP instances |
 | `HARNESS_ORCHESTRATOR_URL` | AgentRuntime base for harness callbacks |
 | `MCP_CONTROL_SERVER_URL` | Control base for relay instance lifecycle |
 | `MCP_CONTROL_INTERNAL_TOKEN` | Internal auth for callbacks |
+| `RELAY_PUBLIC_BASE_URL` | Canonical URL prefix for MCP instances |
+| `RELAY_AUTH_TOKEN` | Optional bearer for WSS connect |
+| `HOST` / `PORT` | Listen address |
+
+Deprecated (logged, ignored): `AGENTRUNTIME_URL`, `CONTROL_SERVICE_URL`, `HARNESS_RELAY_URL` on router.
 
 ### Upgrade
 

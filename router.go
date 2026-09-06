@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/agentruntime-io/agentruntime-mcp-go/relay"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -65,24 +64,20 @@ func RunWithRouter(configPath string) error {
 		log.Printf("MCP bridge route registered at %s", BridgeMountPath)
 	}
 
-	getenv := func(k string) string { return getEnv(k, "") }
-	relayCfg := relay.ServerConfig{
-		AuthToken:     relay.AuthTokenFromEnv(getenv),
-		PublicBaseURL: relay.PublicBaseURLFromEnv(getenv),
+	if composioHandler, err := HandlerForComposioExecutor(configPath); err != nil {
+		return err
+	} else {
+		mux.Handle(ComposioExecutorMountPath, composioHandler)
+		mux.Handle(ComposioExecutorMountPath+"/", composioHandler)
+		log.Printf("Composio executor route registered at %s", ComposioExecutorMountPath)
 	}
-	if orchURL := strings.TrimSpace(getEnv("HARNESS_ORCHESTRATOR_URL", getEnv("AGENTRUNTIME_URL", ""))); orchURL != "" {
-		relayCfg.OrchestratorCallback = relay.NewOrchestratorCallback(
-			orchURL,
-			strings.TrimSpace(getEnv("MCP_CONTROL_INTERNAL_TOKEN", "")),
-		)
-		log.Printf("Harness orchestrator callbacks enabled (%s)", orchURL)
+
+	relayCfg := relay.ServerConfigFromEnv()
+	if relayCfg.OrchestratorCallback != nil {
+		log.Printf("Harness orchestrator callbacks enabled")
 	}
-	if controlURL := strings.TrimSpace(getEnv("MCP_CONTROL_SERVER_URL", getEnv("CONTROL_SERVICE_URL", ""))); controlURL != "" {
-		relayCfg.ControlCallback = relay.NewControlCallback(
-			controlURL,
-			strings.TrimSpace(getEnv("MCP_CONTROL_INTERNAL_TOKEN", "")),
-		)
-		log.Printf("Relay Control callbacks enabled (%s)", controlURL)
+	if relayCfg.ControlCallback != nil {
+		log.Printf("Relay Control callbacks enabled")
 	}
 	relaySrv := relay.NewServer(relayCfg)
 	relaySrv.RegisterRoutes(mux)

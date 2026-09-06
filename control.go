@@ -19,11 +19,12 @@ const HeaderMCPInstanceID = "X-MCP-Instance-Id"
 // HeaderMCPServerID is set by Control discover/validate probes so /bridge/mcp can resolve catalog server_id.
 const HeaderMCPServerID = "X-MCP-Server-Id"
 
-// ControlPayload is the decoded POST /mcp/config response used by bridge mode.
+// ControlPayload is the decoded POST /mcp/config response used by bridge mode and the Composio executor.
 type ControlPayload struct {
 	Config       ConfigView
 	ConfigSchema map[string]any
 	Bridge       map[string]any
+	Composio     map[string]any // Composio executor: toolkit, allowlist, published_tools
 }
 
 func fetchControlPayload(token string, configSchema map[string]any, runtimeContext map[string]any) (*ControlPayload, error) {
@@ -82,6 +83,9 @@ func fetchControlPayload(token string, configSchema map[string]any, runtimeConte
 	}
 	if b, ok := data["bridge"].(map[string]any); ok {
 		out.Bridge = b
+	}
+	if c, ok := data["composio"].(map[string]any); ok {
+		out.Composio = c
 	}
 	return out, nil
 }
