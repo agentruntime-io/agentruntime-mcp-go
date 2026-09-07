@@ -55,6 +55,15 @@ func composioHTTPHandler(w http.ResponseWriter, r *http.Request) {
 	reqID := data["id"]
 	method, _ := data["method"].(string)
 
+	switch method {
+	case "initialize":
+		writeJSONRPCResponse(w, reqID, composioInitializeResult(), nil)
+		return
+	case "notifications/initialized", "ping":
+		writeJSONRPCResponse(w, reqID, map[string]any{}, nil)
+		return
+	}
+
 	ctx := buildRuntimeContext(r)
 	if method == "tools/call" {
 		if tn, ok := toolNameFromParams(data); ok {
@@ -104,6 +113,19 @@ func serveComposioSchema(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(schema)
+}
+
+func composioInitializeResult() map[string]any {
+	return map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities": map[string]any{
+			"tools": map[string]any{},
+		},
+		"serverInfo": map[string]any{
+			"name":    "agentruntime-composio",
+			"version": "1.0.0",
+		},
+	}
 }
 
 func composioMetaFromPayload(payload *ControlPayload) (map[string]any, error) {
@@ -186,6 +208,7 @@ func composioCallTool(payload *ControlPayload, meta map[string]any, data map[str
 			}
 		}
 	}
+	arguments = applyComposioDefaultToolArguments(arguments)
 
 	execBody := map[string]any{
 		"user_id":   userID,
@@ -300,4 +323,14 @@ func composioControlErr(err error) string {
 		}
 	}
 	return err.Error()
+}
+
+func applyComposioDefaultToolArguments(args map[string]any) map[string]any {
+	if args == nil {
+		args = map[string]any{}
+	}
+	if strings.TrimSpace(stringFromMap(args, "user_id")) == "" {
+		args["user_id"] = "me"
+	}
+	return args
 }

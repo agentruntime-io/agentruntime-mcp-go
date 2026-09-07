@@ -70,3 +70,14 @@ func TestComposioMCPResult_error(t *testing.T) {
 		t.Fatalf("res=%v", res)
 	}
 }
+
+func TestComposioInitializeResult(t *testing.T) {
+	res := composioInitializeResult()
+	if res["protocolVersion"] != "2024-11-05" {
+		t.Fatalf("protocolVersion=%v", res["protocolVersion"])
+	}
+	serverInfo, _ := res["serverInfo"].(map[string]any)
+	if serverInfo == nil || serverInfo["name"] != "agentruntime-composio" {
+		t.Fatalf("serverInfo=%v", res["serverInfo"])
+	}
+}
