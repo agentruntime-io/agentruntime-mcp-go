@@ -29,6 +29,17 @@ func TestRetryAfterFromControlBody(t *testing.T) {
 	}
 }
 
+func TestConfigCacheKey_DifferentConnectionIDs(t *testing.T) {
+	schema := map[string]any{"api_key": map[string]any{"type": "string"}}
+	ctxA := map[string]any{"instance_id": "inst-1", "connection_ids": []string{"conn_a"}}
+	ctxB := map[string]any{"instance_id": "inst-1", "connection_ids": []string{"conn_b"}}
+	kA := configCacheKey("token-abc", schema, ctxA)
+	kB := configCacheKey("token-abc", schema, ctxB)
+	if kA == kB {
+		t.Fatalf("expected different cache keys for different connection_ids")
+	}
+}
+
 func TestFetchControlConfigCached_SingleflightAndCache(t *testing.T) {
 	resetConfigCacheForTest()
 	var calls atomic.Int32

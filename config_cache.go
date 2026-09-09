@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,6 +95,7 @@ func configCacheKey(token string, configSchema map[string]any, runtimeContext ma
 	parts := []string{
 		tokenFingerprint(token),
 		runtimeContextInstanceKey(runtimeContext),
+		runtimeContextConnectionIDsKey(runtimeContext),
 		configSchemaHash(configSchema),
 	}
 	return strings.Join(parts, "|")
@@ -114,6 +117,39 @@ func runtimeContextInstanceKey(runtimeContext map[string]any) string {
 		return "server:" + strings.TrimSpace(v)
 	}
 	return ""
+}
+
+func runtimeContextConnectionIDsKey(runtimeContext map[string]any) string {
+	if runtimeContext == nil {
+		return ""
+	}
+	raw, ok := runtimeContext["connection_ids"]
+	if !ok || raw == nil {
+		return ""
+	}
+	switch v := raw.(type) {
+	case []string:
+		if len(v) == 0 {
+			return ""
+		}
+		cp := append([]string(nil), v...)
+		sort.Strings(cp)
+		return "conn:" + strings.Join(cp, ",")
+	case []any:
+		ids := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" && s != "<nil>" {
+				ids = append(ids, s)
+			}
+		}
+		if len(ids) == 0 {
+			return ""
+		}
+		sort.Strings(ids)
+		return "conn:" + strings.Join(ids, ",")
+	default:
+		return ""
+	}
 }
 
 func configSchemaHash(configSchema map[string]any) string {
