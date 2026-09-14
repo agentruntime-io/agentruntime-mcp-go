@@ -102,6 +102,9 @@ func RunWithRouter(configPath string) error {
 			if wa, ok := adp.(WebhookAdapter); ok {
 				wa.RegisterWebhook(mux)
 			}
+			if iva, ok := adp.(InboundVendorAdapter); ok {
+				iva.RegisterInboundVendor(mux)
+			}
 		}
 	}
 
