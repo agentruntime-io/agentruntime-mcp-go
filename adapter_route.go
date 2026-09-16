@@ -35,6 +35,8 @@ type InboundAdapterRouteCredentials struct {
 	VendorSecret   string `json:"vendor_secret"`
 	Adapter        string `json:"adapter"`
 	TenantID       string `json:"tenant_id"`
+	MCPInstanceID  string `json:"mcp_instance_id,omitempty"`
+	ProjectID      string `json:"project_id,omitempty"`
 	Enabled        bool   `json:"enabled"`
 	BFFBaseURL     string `json:"bff_base_url"`
 }
