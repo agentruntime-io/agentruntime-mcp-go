@@ -62,6 +62,71 @@ type ResolveTestResponse struct {
 	Meta          map[string]any `json:"meta"`
 }
 
+// ResolveMCPConnectionConfig resolves MCP connection credentials via Control resolve-test.
+func ResolveMCPConnectionConfig(ctx context.Context, env InboundAdapterRouteEnv, tenantID, projectID, connectionID, serverID, toolName string) (ResolveTestResponse, error) {
+	var out ResolveTestResponse
+	tenantID = strings.TrimSpace(tenantID)
+	connectionID = strings.TrimSpace(connectionID)
+	serverID = strings.TrimSpace(serverID)
+	toolName = strings.TrimSpace(toolName)
+	if tenantID == "" || connectionID == "" {
+		return out, fmt.Errorf("tenant_id and connection_id required")
+	}
+	if env.ControlURL == "" || env.InternalToken == "" {
+		return out, fmt.Errorf("MCP_CONTROL_SERVER_URL and MCP_CONTROL_INTERNAL_TOKEN required")
+	}
+	if toolName == "" {
+		toolName = "resolve_test"
+	}
+	q := url.Values{}
+	q.Set("tenant_id", tenantID)
+	if projectID = strings.TrimSpace(projectID); projectID != "" {
+		q.Set("project_id", projectID)
+	}
+	path := env.ControlURL + "/v1/mcp/config/resolve-test?" + q.Encode()
+	bodyMap := map[string]any{
+		"connection_id": connectionID,
+		"tool_name":     toolName,
+	}
+	if serverID != "" {
+		bodyMap["server_id"] = serverID
+	}
+	body, err := json.Marshal(bodyMap)
+	if err != nil {
+		return out, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, path, bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(inboundInternalTokenHeader, env.InternalToken)
+	req.Header.Set("X-Service-Name", ServiceConnectorRouter)
+	req.Header.Set(inboundTenantHeader, tenantID)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return out, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return out, fmt.Errorf("control resolve-test: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, err
+	}
+	if len(out.ConfigPreview) == 0 {
+		return out, fmt.Errorf("control resolve-test returned empty config_preview")
+	}
+	return out, nil
+}
+
 // ResolveMCPInstanceConfig resolves MCP instance credentials via Control resolve-test.
 func ResolveMCPInstanceConfig(ctx context.Context, env InboundAdapterRouteEnv, tenantID, projectID, instanceID, toolName string) (ResolveTestResponse, error) {
 	var out ResolveTestResponse

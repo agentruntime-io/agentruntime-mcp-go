@@ -28,17 +28,23 @@ func LoadInboundAdapterRouteEnv() InboundAdapterRouteEnv {
 	}
 }
 
-// InboundAdapterRouteCredentials is returned by Control internal lookup.
-type InboundAdapterRouteCredentials struct {
+// InboundDeliverTarget is one subscription forward target for fan-out delivery.
+type InboundDeliverTarget struct {
 	SubscriptionID string `json:"subscription_id"`
 	SigningSecret  string `json:"signing_secret"`
-	VendorSecret   string `json:"vendor_secret"`
-	Adapter        string `json:"adapter"`
-	TenantID       string `json:"tenant_id"`
-	MCPInstanceID  string `json:"mcp_instance_id,omitempty"`
 	ProjectID      string `json:"project_id,omitempty"`
-	Enabled        bool   `json:"enabled"`
-	BFFBaseURL     string `json:"bff_base_url"`
+}
+
+// InboundAdapterRouteCredentials is returned by Control internal lookup.
+type InboundAdapterRouteCredentials struct {
+	VendorSecret   string                 `json:"vendor_secret"`
+	Adapter        string                 `json:"adapter"`
+	TenantID       string                 `json:"tenant_id"`
+	ConnectionID   string                 `json:"connection_id"`
+	ServerID       string                 `json:"server_id"`
+	Enabled        bool                   `json:"enabled"`
+	DeliverTargets []InboundDeliverTarget `json:"deliver_targets"`
+	BFFBaseURL     string                 `json:"bff_base_url"`
 }
 
 // LookupInboundAdapterRoute resolves route_token via Control internal API.
@@ -77,22 +83,71 @@ func LookupInboundAdapterRoute(ctx context.Context, env InboundAdapterRouteEnv, 
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, err
 	}
-	if !out.Enabled || strings.TrimSpace(out.SigningSecret) == "" || strings.TrimSpace(out.BFFBaseURL) == "" {
+	if !out.Enabled || len(out.DeliverTargets) == 0 || strings.TrimSpace(out.BFFBaseURL) == "" {
 		return nil, nil
+	}
+	for _, t := range out.DeliverTargets {
+		if strings.TrimSpace(t.SubscriptionID) == "" || strings.TrimSpace(t.SigningSecret) == "" {
+			return nil, nil
+		}
 	}
 	return &out, nil
 }
 
-// ResolveInboundForwardTargets picks BFF base URL and credentials for adapter forwarding.
+// ResolveInboundForwardTargets picks the first deliver target (legacy single-target helper).
 func ResolveInboundForwardTargets(_ InboundAdapterRouteEnv, creds *InboundAdapterRouteCredentials) (bffBaseURL string, subscriptionID, signingSecret string, err error) {
-	if creds == nil {
+	if creds == nil || len(creds.DeliverTargets) == 0 {
 		return "", "", "", fmt.Errorf("adapter route not found")
 	}
 	bff := strings.TrimRight(strings.TrimSpace(creds.BFFBaseURL), "/")
 	if bff == "" {
 		return "", "", "", fmt.Errorf("bff_base_url missing from adapter route lookup")
 	}
-	return bff, creds.SubscriptionID, creds.SigningSecret, nil
+	t := creds.DeliverTargets[0]
+	return bff, t.SubscriptionID, t.SigningSecret, nil
+}
+
+// DeliverInboundFanOut forwards the vendor payload to every deliver target with per-subscription idempotency keys.
+func DeliverInboundFanOut(ctx context.Context, creds *InboundAdapterRouteCredentials, baseIdempotencyKey string, body []byte, contentType string) error {
+	if creds == nil || len(creds.DeliverTargets) == 0 {
+		return fmt.Errorf("no deliver targets")
+	}
+	bff := strings.TrimRight(strings.TrimSpace(creds.BFFBaseURL), "/")
+	if bff == "" {
+		return fmt.Errorf("bff_base_url missing")
+	}
+	baseIdempotencyKey = strings.TrimSpace(baseIdempotencyKey)
+	if baseIdempotencyKey == "" {
+		return fmt.Errorf("idempotency key required")
+	}
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	var firstErr error
+	for _, target := range creds.DeliverTargets {
+		idem := baseIdempotencyKey + "-" + strings.TrimSpace(target.SubscriptionID)
+		resp, err := DeliverModeB(ctx, ModeBRequest{
+			BFFBaseURL:     bff,
+			SubscriptionID: target.SubscriptionID,
+			SigningSecret:  target.SigningSecret,
+			IdempotencyKey: idem,
+			Body:           body,
+			ContentType:    contentType,
+		})
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		status := resp.StatusCode
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if status >= 500 && firstErr == nil {
+			firstErr = fmt.Errorf("bff returned %d for subscription %s", status, target.SubscriptionID)
+		}
+	}
+	return firstErr
 }
 
 // ConnectorWebhookPath returns the public path segment for an adapter route.
