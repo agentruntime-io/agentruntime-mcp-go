@@ -30,6 +30,9 @@ func needsResolvedConfig(r *http.Request) bool {
 
 	var msg struct {
 		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
 	}
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return true
@@ -78,7 +81,7 @@ func Middleware(configSchema map[string]any, next http.Handler, mountPath string
 			if tryControl {
 				ctx := buildRuntimeContext(r)
 				logRuntimeContextSummary(r, ctx, needConfig)
-				resolved, err := fetchControlConfig(token, configSchema, ctx)
+				resolved, err := fetchControlConfigCached(token, configSchema, ctx)
 				if err != nil {
 					logError("control config fetch failed: %v", err)
 					if configRequired && !envAloneSatisfiesRequired(configSchema, envIdx) {

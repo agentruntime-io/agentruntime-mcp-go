@@ -37,6 +37,7 @@ func RunWithRegistry(configPath string, adapterNames ...string) error {
 	}
 	return RunWithConfig(cfg, func(server *mcp.Server, schema map[string]any) {
 		sw := NewSchemaWriter(schema)
+		ResetToolRegistry()
 		for _, a := range adapters {
 			a.Register(server, sw)
 		}
@@ -74,6 +75,12 @@ func RunWithConfig(cfg *ServerConfig, setup func(server *mcp.Server, configSchem
 		return server
 	}, opts)
 	handler := Middleware(configSchema, mcpHandler, "")
+	handler = ForwardIdentityHeaders(handler)
+	handler = ForwardRequestBearer(handler)
+	oauthCfg := OAuthConfigFromEnv()
+	if oauthCfg.Enabled() {
+		handler = OAuthMiddleware(oauthCfg, "/mcp", newJWTVerifier(oauthCfg.Issuer, oauthCfg.Audience, oauthCfg.JWKSURL), handler)
+	}
 	handler = wrapWithTracing(cfg, handler)
 
 	log.Printf("MCP server listening on %s", addr)

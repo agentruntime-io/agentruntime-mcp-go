@@ -62,6 +62,10 @@ Same `config.yaml` format as Python/TypeScript packages. Env overrides: `HOST`, 
 
 Local development for a **secretful** adapter without Control: set **`MCP_CONFIG_FETCH_REQUIRED=false`** or provide a dev Control URL. No-config adapters need no Control env.
 
+## Per-request bearer forwarding
+
+`ForwardRequestBearer` middleware (wired in `RunWithConfig`, `HandlerForAdapter`, and bridge handlers) copies the incoming MCP caller’s **`Authorization: Bearer`** or **`X-MCP-Token`** into request context. Downstream HTTP clients read it via **`RequestBearerFromContext(ctx)`** — used by Platform MCP to forward each caller’s PAT to the BFF.
+
 ## Proxy (library)
 
 ```go
@@ -101,3 +105,24 @@ agentmcp.RunWithRegistry("config.yaml", "resend")
 Example MCP server using this SDK:
 
 - [connectors/go-connectors/resend-connector](../../connectors/go-connectors/resend-connector/) – Resend (send_email, list_audiences)
+- [connectors/go-connectors/clickup-connector](../../connectors/go-connectors/clickup-connector/) – ClickUp (69 tools, uses `toolorg`)
+
+## Tool organization (`toolorg`)
+
+Large connectors declare palette groups in the **publish payload** via the **`toolorg`** subpackage. Wire-name helpers run at registration/publish time only — not at catalog read. See [docs/mcp/MCP_TOOL_ORGANIZATION.md](../../docs/mcp/MCP_TOOL_ORGANIZATION.md).
+
+```go
+import "github.com/agentruntime-io/agentruntime-mcp-go/toolorg"
+
+// Called when building the catalog publish payload:
+meta := toolorg.PublisherMetadata("clickup_get_task", toolorg.Metadata{})
+// → display_name, suggested_group, suggested_tags for mcp_tools.metadata
+```
+
+External MCP servers without publish metadata rely on sysadmin **Tool organization** for grouping.
+
+Details: [toolorg/README.md](./toolorg/README.md).
+
+## Releasing
+
+See [`../RELEASE.md`](../RELEASE.md) (Go section): lightweight Git tags (`git tag v0.3.2`), then `go get github.com/agentruntime-io/agentruntime-mcp-go@v0.3.2` in connectors — [`connectors/go-connectors/README.md`](../../connectors/go-connectors/README.md).

@@ -29,8 +29,9 @@ func (e *ErrAdapterNotFound) Unwrap() error {
 
 // ControlError wraps control server HTTP errors with status code.
 type ControlError struct {
-	Status int
-	Body   string
+	Status        int
+	Body          string
+	RetryAfterSec int
 }
 
 func (e *ControlError) Error() string {

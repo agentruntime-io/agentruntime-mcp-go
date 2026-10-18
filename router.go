@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/agentruntime-io/agentruntime-mcp-go/relay"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -24,7 +25,7 @@ func HandlerForAdapter(configPath, adapterName, mountPath string) (http.Handler,
 	server, configSchema := MakeServer(cfg)
 	sw := NewSchemaWriter(configSchema)
 	for _, a := range adapters {
-		a.Register(server, sw)
+		PrepareAdapterRegistration(server, sw, a.Register)
 	}
 
 	stateless := cfg.Server != nil && cfg.Server.StatelessHTTP
@@ -33,6 +34,12 @@ func HandlerForAdapter(configPath, adapterName, mountPath string) (http.Handler,
 		return server
 	}, opts)
 	handler := Middleware(configSchema, mcpHandler, mountPath)
+	handler = ForwardIdentityHeaders(handler)
+	handler = ForwardRequestBearer(handler)
+	oauthCfg := OAuthConfigFromEnv()
+	if oauthCfg.Enabled() {
+		handler = OAuthMiddleware(oauthCfg, mountPath, newJWTVerifier(oauthCfg.Issuer, oauthCfg.Audience, oauthCfg.JWKSURL), handler)
+	}
 	return wrapWithTracing(cfg, handler), nil
 }
 
@@ -49,6 +56,33 @@ func RunWithRouter(configPath string) error {
 	}
 
 	mux := http.NewServeMux()
+	if bridgeHandler, err := HandlerForBridge(configPath); err != nil {
+		return err
+	} else {
+		mux.Handle(BridgeMountPath, bridgeHandler)
+		mux.Handle(BridgeMountPath+"/", bridgeHandler)
+		log.Printf("MCP bridge route registered at %s", BridgeMountPath)
+	}
+
+	if composioHandler, err := HandlerForComposioExecutor(configPath); err != nil {
+		return err
+	} else {
+		mux.Handle(ComposioExecutorMountPath, composioHandler)
+		mux.Handle(ComposioExecutorMountPath+"/", composioHandler)
+		log.Printf("Composio executor route registered at %s", ComposioExecutorMountPath)
+	}
+
+	relayCfg := relay.ServerConfigFromEnv()
+	if relayCfg.OrchestratorCallback != nil {
+		log.Printf("Harness orchestrator callbacks enabled")
+	}
+	if relayCfg.ControlCallback != nil {
+		log.Printf("Relay Control callbacks enabled")
+	}
+	relaySrv := relay.NewServer(relayCfg)
+	relaySrv.RegisterRoutes(mux)
+	log.Printf("Outbound relay routes registered (%s, %s)", relay.MCPConnectPath, relay.HarnessConnectPath)
+
 	for _, name := range names {
 		mountPath := "/" + name + "/mcp"
 		h, err := HandlerForAdapter(configPath, name, mountPath)
@@ -57,6 +91,21 @@ func RunWithRouter(configPath string) error {
 		}
 		mux.Handle(mountPath, h)
 		mux.Handle(mountPath+"/", h)
+
+		// Register optional vendor-webhook routes for adapters that implement
+		// WebhookAdapter (e.g. GitHub, Slack). Adapters that don't are unaffected.
+		adps, err := getAdapters([]string{name})
+		if err != nil {
+			return err
+		}
+		for _, adp := range adps {
+			if wa, ok := adp.(WebhookAdapter); ok {
+				wa.RegisterWebhook(mux)
+			}
+			if iva, ok := adp.(InboundVendorAdapter); ok {
+				iva.RegisterInboundVendor(mux)
+			}
+		}
 	}
 
 	host := "127.0.0.1"

@@ -21,6 +21,20 @@ func TestBuildRuntimeContext_InstanceHeader(t *testing.T) {
 	}
 }
 
+func TestBuildRuntimeContext_ConnectionIDsHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set(HeaderMCPConnectionIDs, "conn_a, conn_b")
+
+	ctx := buildRuntimeContext(req)
+	ids, ok := ctx["connection_ids"].([]string)
+	if !ok {
+		t.Fatalf("connection_ids type = %T", ctx["connection_ids"])
+	}
+	if len(ids) != 2 || ids[0] != "conn_a" || ids[1] != "conn_b" {
+		t.Fatalf("connection_ids = %v", ids)
+	}
+}
+
 func TestBuildRuntimeContext_ServerIDEnv(t *testing.T) {
 	t.Setenv("MCP_SERVER_ID", "srv_test")
 

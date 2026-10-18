@@ -16,10 +16,25 @@ import (
 // It is merged into POST /mcp/config runtime_context.instance_id. Matches agentruntime/mcp.HeaderMCPInstanceID.
 const HeaderMCPInstanceID = "X-MCP-Instance-Id"
 
-func fetchControlConfig(token string, configSchema map[string]any, runtimeContext map[string]any) (ConfigView, error) {
+// HeaderMCPConnectionIDs carries principal-scoped connection override(s) for POST /mcp/config.
+// Comma-separated when multiple IDs are present. Matches agentruntime/mcp.HeaderMCPConnectionIDs.
+const HeaderMCPConnectionIDs = "X-MCP-Connection-Ids"
+
+// HeaderMCPServerID is set by Control discover/validate probes so /bridge/mcp can resolve catalog server_id.
+const HeaderMCPServerID = "X-MCP-Server-Id"
+
+// ControlPayload is the decoded POST /mcp/config response used by bridge mode and the Composio executor.
+type ControlPayload struct {
+	Config       ConfigView
+	ConfigSchema map[string]any
+	Bridge       map[string]any
+	Composio     map[string]any // Composio executor: toolkit, allowlist, published_tools
+}
+
+func fetchControlPayload(token string, configSchema map[string]any, runtimeContext map[string]any) (*ControlPayload, error) {
 	base := strings.TrimSuffix(os.Getenv("MCP_CONTROL_SERVER_URL"), "/")
 	if base == "" {
-		return nil, nil
+		return &ControlPayload{Config: ConfigView{}}, nil
 	}
 	timeoutSec := 5
 	if s := os.Getenv("MCP_CONTROL_TIMEOUT_SEC"); s != "" {
@@ -52,25 +67,65 @@ func fetchControlConfig(token string, configSchema map[string]any, runtimeContex
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, &ControlError{Status: resp.StatusCode, Body: string(bodyBytes)}
+		bodyStr := string(bodyBytes)
+		return nil, &ControlError{
+			Status:        resp.StatusCode,
+			Body:          bodyStr,
+			RetryAfterSec: parseRetryAfterHeader(resp.Header.Get("Retry-After"), bodyStr),
+		}
 	}
 	var data map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, fmt.Errorf("%w: invalid response: %v", ErrControlConfig, err)
 	}
+	out := &ControlPayload{}
 	if c, ok := data["config"].(map[string]any); ok {
-		return ConfigView(c), nil
+		out.Config = ConfigView(c)
 	}
-	if d, ok := data["data"].(map[string]any); ok {
-		return ConfigView(d), nil
+	if cs, ok := data["config_schema"].(map[string]any); ok {
+		out.ConfigSchema = cs
 	}
-	return ConfigView(data), nil
+	if b, ok := data["bridge"].(map[string]any); ok {
+		out.Bridge = b
+	}
+	if c, ok := data["composio"].(map[string]any); ok {
+		out.Composio = c
+	}
+	return out, nil
+}
+
+func fetchControlConfig(token string, configSchema map[string]any, runtimeContext map[string]any) (ConfigView, error) {
+	return fetchControlConfigCached(token, configSchema, runtimeContext)
+}
+
+func parseRetryAfterHeader(headerValue, body string) int {
+	headerValue = strings.TrimSpace(headerValue)
+	if headerValue != "" {
+		if sec, err := strconv.Atoi(headerValue); err == nil && sec > 0 {
+			return sec
+		}
+	}
+	return retryAfterFromControlBody(body)
 }
 
 func buildRuntimeContext(r *http.Request) map[string]any {
 	ctx := make(map[string]any)
 	if inst := strings.TrimSpace(r.Header.Get(HeaderMCPInstanceID)); inst != "" {
 		ctx["instance_id"] = inst
+	}
+	if raw := strings.TrimSpace(r.Header.Get(HeaderMCPConnectionIDs)); raw != "" {
+		ids := make([]string, 0, 1)
+		for _, part := range strings.Split(raw, ",") {
+			if s := strings.TrimSpace(part); s != "" {
+				ids = append(ids, s)
+			}
+		}
+		if len(ids) > 0 {
+			ctx["connection_ids"] = ids
+		}
+	}
+	if sid := strings.TrimSpace(r.Header.Get(HeaderMCPServerID)); sid != "" {
+		ctx["server_id"] = sid
 	}
 	if id := strings.TrimSpace(os.Getenv("MCP_SERVER_ID")); id != "" {
 		ctx["server_id"] = id

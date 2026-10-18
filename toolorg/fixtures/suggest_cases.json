@@ -1,0 +1,12 @@
+[
+  { "tool_name": "clickup_get_task", "group": "tasks", "tags": ["read_only", "tasks", "v2"] },
+  { "tool_name": "clickup_create_task", "group": "tasks", "tags": ["mutating", "tasks", "v2"] },
+  { "tool_name": "clickup_create_doc_page", "group": "docs", "tags": ["docs", "mutating", "v3"] },
+  { "tool_name": "clickup_send_chat_message", "group": "chat", "tags": ["chat", "mutating", "v3"] },
+  { "tool_name": "clickup_search", "group": "search_members", "tags": ["read_only", "search_members", "v2"] },
+  { "tool_name": "clickup_get_spaces", "group": "hierarchy", "tags": ["hierarchy", "read_only", "v2"] },
+  { "tool_name": "clickup_start_time_tracking", "group": "time", "tags": ["mutating", "time", "v2"] },
+  { "tool_name": "clickup_get_workspace_members", "group": "search_members", "tags": ["read_only", "search_members", "v2"] },
+  { "tool_name": "clickup_create_comment", "group": "comments", "tags": ["comments", "mutating", "v2"] },
+  { "tool_name": "github_get_repo", "group": "tasks", "tags": ["read_only", "tasks", "v2"] }
+]
