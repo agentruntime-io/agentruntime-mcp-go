@@ -16,6 +16,9 @@ type ToolDef struct {
 	// InputSchema when non-nil is copied to the MCP tool before registration.
 	// When nil, AddTool infers schema from the handler input type.
 	InputSchema any
+	// Annotations when non-nil is copied to the MCP tool (tools/list). Set ReadOnlyHint on
+	// tools that do not change anything; control-service stores it as mcp_tools.read_only.
+	Annotations *mcp.ToolAnnotations
 }
 
 // ToolRegistration is a registered tool entry for introspection (catalog, CI).
@@ -103,6 +106,7 @@ func ToolDefFromMCP(t *mcp.Tool) *ToolDef {
 		Name:        t.Name,
 		Description: t.Description,
 		InputSchema: t.InputSchema,
+		Annotations: t.Annotations,
 	}
 }
 
@@ -124,6 +128,7 @@ func toolDefFromArg(tool any, opts ...ToolOption) ToolDef {
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: t.InputSchema,
+			Annotations: t.Annotations,
 		}
 	default:
 		panic("agentruntimemcp.AddTool: tool must be *ToolDef, ToolDef, or *mcp.Tool")

@@ -49,3 +49,49 @@ func TestAddTool_holdRegistry(t *testing.T) {
 		t.Fatalf("registered: got %d want 4", len(regs))
 	}
 }
+
+func TestAddTool_annotationsReachToolsList(t *testing.T) {
+	ResetToolRegistry()
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0"}, nil)
+
+	AddTool(server, &mcp.Tool{
+		Name:        "legacy_read",
+		Description: "legacy mcp.Tool marked read-only",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, holdHandler)
+	AddTool(server, &ToolDef{
+		Name:        "def_read",
+		Description: "ToolDef marked read-only",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+	}, holdHandler)
+	AddTool(server, &mcp.Tool{Name: "plain_write", Description: "no annotations"}, holdHandler)
+
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "0"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	res, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, tool := range res.Tools {
+		got[tool.Name] = tool.Annotations != nil && tool.Annotations.ReadOnlyHint
+	}
+	want := map[string]bool{"legacy_read": true, "def_read": true, "plain_write": false}
+	for name, readOnly := range want {
+		if v, ok := got[name]; !ok || v != readOnly {
+			t.Fatalf("%s: readOnlyHint got %v (listed %v) want %v", name, v, ok, readOnly)
+		}
+	}
+}
