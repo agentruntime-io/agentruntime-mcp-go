@@ -8,23 +8,27 @@ import (
 // OAuthConfig holds optional MCP OAuth 2.1 resource-server settings.
 // When Enabled() is false, OAuth middleware is a no-op (PAT-only behavior).
 type OAuthConfig struct {
-	ResourceURL            string
-	Issuer                 string
-	JWKSURL                string
-	Audience               string
-	RequiredScopes         []string
-	AuthorizationServers   []string
-	ResourceDocumentation  string
+	ResourceURL           string
+	Issuer                string
+	JWKSURL               string
+	Audience              string
+	RequiredScopes        []string
+	AuthorizationServers  []string
+	ResourceDocumentation string
+	// RequireAuthOnConnect also gates initialize / tools/list / ping (Strategy B). Cursor, Cline, Continue,
+	// Warp and Gemini CLI only start OAuth when the connect handshake returns 401.
+	RequireAuthOnConnect bool
 }
 
 const (
-	envMCPResourceURL           = "AGENTRUNTIME_MCP_RESOURCE_URL"
-	envOAuthIssuer              = "AGENTRUNTIME_OAUTH_ISSUER"
-	envOAuthJWKSURL             = "AGENTRUNTIME_OAUTH_JWKS_URL"
-	envOAuthAudience            = "AGENTRUNTIME_OAUTH_AUDIENCE"
-	envOAuthRequiredScopes      = "AGENTRUNTIME_OAUTH_REQUIRED_SCOPES"
-	envOAuthAuthorizationServer = "AGENTRUNTIME_OAUTH_AUTHORIZATION_SERVER"
-	envOAuthResourceDocs        = "AGENTRUNTIME_OAUTH_RESOURCE_DOCUMENTATION"
+	envMCPResourceURL            = "AGENTRUNTIME_MCP_RESOURCE_URL"
+	envOAuthIssuer               = "AGENTRUNTIME_OAUTH_ISSUER"
+	envOAuthJWKSURL              = "AGENTRUNTIME_OAUTH_JWKS_URL"
+	envOAuthAudience             = "AGENTRUNTIME_OAUTH_AUDIENCE"
+	envOAuthRequiredScopes       = "AGENTRUNTIME_OAUTH_REQUIRED_SCOPES"
+	envOAuthAuthorizationServer  = "AGENTRUNTIME_OAUTH_AUTHORIZATION_SERVER"
+	envOAuthResourceDocs         = "AGENTRUNTIME_OAUTH_RESOURCE_DOCUMENTATION"
+	envOAuthRequireAuthOnConnect = "AGENTRUNTIME_OAUTH_REQUIRE_AUTH_ON_CONNECT"
 )
 
 // OAuthConfigFromEnv loads MCP OAuth settings from environment variables.
@@ -56,6 +60,16 @@ func OAuthConfigFromEnv() OAuthConfig {
 		RequiredScopes:        required,
 		AuthorizationServers:  authServers,
 		ResourceDocumentation: strings.TrimSpace(os.Getenv(envOAuthResourceDocs)),
+		RequireAuthOnConnect:  envTruthy(os.Getenv(envOAuthRequireAuthOnConnect)),
+	}
+}
+
+func envTruthy(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -9,7 +9,8 @@ import (
 )
 
 // OAuthMiddleware enforces MCP OAuth 2.1 on tool execution when OAuthConfig is enabled.
-// Handshake methods (initialize, tools/list) remain unauthenticated per Strategy A in PLATFORM_MCP_OAUTH.md.
+// Handshake methods (initialize, tools/list) remain unauthenticated per Strategy A in PLATFORM_MCP_OAUTH.md,
+// unless cfg.RequireAuthOnConnect (Strategy B) gates every POST.
 func OAuthMiddleware(cfg OAuthConfig, mountPath string, verifier *jwtVerifier, next http.Handler) http.Handler {
 	if !cfg.Enabled() {
 		return next
@@ -21,7 +22,7 @@ func OAuthMiddleware(cfg OAuthConfig, mountPath string, verifier *jwtVerifier, n
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimSuffix(r.URL.Path, "/")
-		if path == oauthProtectedResourcePath {
+		if isOAuthProtectedResourcePath(cfg, path) {
 			OAuthProtectedResourceHandler(cfg).ServeHTTP(w, r)
 			return
 		}
@@ -31,7 +32,13 @@ func OAuthMiddleware(cfg OAuthConfig, mountPath string, verifier *jwtVerifier, n
 			return
 		}
 
-		if !mcpMethodRequiresAuth(r) {
+		// CORS preflights never carry credentials.
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !cfg.RequireAuthOnConnect && !mcpMethodRequiresAuth(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
