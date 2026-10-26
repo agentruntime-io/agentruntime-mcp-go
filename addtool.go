@@ -10,7 +10,7 @@ import (
 // AddTool registers an MCP tool with input schema inferred from the handler's In type.
 // Pass *ToolDef (preferred; supports Hold) or *mcp.Tool (legacy; use WithHold() for hold).
 // When InputSchema is nil, builds schema via toolschema.For[In].
-// Annotations (e.g. ReadOnlyHint) are passed through to tools/list.
+// Annotations (ReadOnly(), Writes(), or any mcp.ToolAnnotations) are passed through to tools/list.
 //
 // Held tools are recorded in the hold registry for CI/catalog but omitted from the MCP wire
 // (tools/list). Catalog generators should omit tools where hold is true.

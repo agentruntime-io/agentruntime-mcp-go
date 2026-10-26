@@ -107,6 +107,18 @@ Example MCP server using this SDK:
 - [connectors/go-connectors/resend-connector](../../connectors/go-connectors/resend-connector/) – Resend (send_email, list_audiences)
 - [connectors/go-connectors/clickup-connector](../../connectors/go-connectors/clickup-connector/) – ClickUp (69 tools, uses `toolorg`)
 
+## Read-only labels
+
+AgentRuntime labels each published tool read-only or not and records where the label came from. What the tool says in `tools/list` wins; when it says nothing, control-service infers the label from the tool name (a plain read verb and nothing that writes, runs caller input, spends money or returns secrets) and shows it as inferred.
+
+```go
+agentmcp.AddTool(server, &agentmcp.ToolDef{Name: "acme_list_items", Description: "...", Annotations: agentmcp.ReadOnly()}, h)
+// A name that reads like a read but changes something (acknowledges a queue, creates what it does not find):
+agentmcp.AddTool(server, &mcp.Tool{Name: "acme_get_updates", Description: "...", Annotations: agentmcp.Writes(true)}, h)
+```
+
+`Writes` sends `destructiveHint` (defined by MCP only for tools that are not read-only) because go-sdk before v1.5 drops `readOnlyHint: false` from the wire. Changing a hint needs no manual publish: control's 15-minute schema check picks it up. Rule, storage and propagation: control-service `docs/mcp-tool-read-only-labels.md`; connector guidance: connectors `docs/TOOL_READ_ONLY.md`.
+
 ## Tool organization (`toolorg`)
 
 Large connectors declare palette groups in the **publish payload** via the **`toolorg`** subpackage. Wire-name helpers run at registration/publish time only — not at catalog read. See [docs/mcp/MCP_TOOL_ORGANIZATION.md](../../docs/mcp/MCP_TOOL_ORGANIZATION.md).

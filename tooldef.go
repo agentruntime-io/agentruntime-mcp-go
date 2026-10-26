@@ -16,8 +16,10 @@ type ToolDef struct {
 	// InputSchema when non-nil is copied to the MCP tool before registration.
 	// When nil, AddTool infers schema from the handler input type.
 	InputSchema any
-	// Annotations when non-nil is copied to the MCP tool (tools/list). Set ReadOnlyHint on
-	// tools that do not change anything; control-service stores it as mcp_tools.read_only.
+	// Annotations when non-nil is copied to the MCP tool (tools/list). Use ReadOnly() for a tool that
+	// changes nothing and Writes() for one whose name reads like a read but is not; without either the
+	// platform infers the label from the name (see annotations.go). Control-service stores the label as
+	// mcp_tools.read_only, and where it came from as mcp_tools.read_only_source.
 	Annotations *mcp.ToolAnnotations
 }
 
