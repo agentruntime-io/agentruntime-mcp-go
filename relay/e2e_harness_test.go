@@ -52,6 +52,7 @@ func TestHarnessE2E_FullRoundTrip(t *testing.T) {
 
 	srv := relay.NewServer(relay.ServerConfig{
 		AuthToken:            "e2e-token",
+		InternalToken:        "e2e-internal",
 		OrchestratorCallback: relay.NewOrchestratorCallback(orchSrv.URL, ""),
 	})
 	mux := http.NewServeMux()
@@ -74,6 +75,8 @@ func TestHarnessE2E_FullRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", "e2e-internal")
+	req.Header.Set("X-Tenant-Id", "tenant-1")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -112,14 +115,13 @@ func TestHarnessE2E_FullRoundTrip(t *testing.T) {
 
 // TestHarnessE2E_OfflineDispatchThenReconnect simulates workbench offline queue at relay layer.
 func TestHarnessE2E_OfflineDispatchThenReconnect(t *testing.T) {
-	srv := relay.NewServer(relay.ServerConfig{AuthToken: "e2e-token"})
+	srv := relay.NewServer(relay.ServerConfig{AuthToken: "e2e-token", InternalToken: "e2e-internal"})
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/relay/harness/workers/workbench:offline-user/run", "application/json",
-		strings.NewReader(`{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`))
+	resp, err := dispatchJob(ts.URL+"/relay/harness/workers/workbench:offline-user/run", "tenant-1", `{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,8 +134,7 @@ func TestHarnessE2E_OfflineDispatchThenReconnect(t *testing.T) {
 	go runMockHarnessWorker(t, ts, "workbench:offline-user", "tenant-1", "offline-user", "heavy", workerDone)
 	time.Sleep(100 * time.Millisecond)
 
-	resp2, err := http.Post(ts.URL+"/relay/harness/workers/workbench:offline-user/run", "application/json",
-		strings.NewReader(`{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`))
+	resp2, err := dispatchJob(ts.URL+"/relay/harness/workers/workbench:offline-user/run", "tenant-1", `{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +152,7 @@ func TestHarnessE2E_OfflineDispatchThenReconnect(t *testing.T) {
 
 // TestHarnessE2E_SharedWorkerPickAndDispatch exercises Tier 2 lightweight pool routing.
 func TestHarnessE2E_SharedWorkerPickAndDispatch(t *testing.T) {
-	srv := relay.NewServer(relay.ServerConfig{AuthToken: "e2e-token"})
+	srv := relay.NewServer(relay.ServerConfig{AuthToken: "e2e-token", InternalToken: "e2e-internal"})
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
 	ts := httptest.NewServer(mux)
@@ -161,7 +162,9 @@ func TestHarnessE2E_SharedWorkerPickAndDispatch(t *testing.T) {
 	go runMockHarnessWorkerTier(t, ts, "shared:pool-1", "tenant-pool", "", "lightweight", []string{"claude"}, workerDone)
 	time.Sleep(100 * time.Millisecond)
 
-	pickResp, err := http.Get(ts.URL + "/relay/harness/pick?tenant_id=tenant-pool&provider=claude&tier=lightweight")
+	pickReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/relay/harness/pick?tenant_id=tenant-pool&provider=claude&tier=lightweight", nil)
+	pickReq.Header.Set("X-Internal-Token", "e2e-internal")
+	pickResp, err := http.DefaultClient.Do(pickReq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,8 +182,7 @@ func TestHarnessE2E_SharedWorkerPickAndDispatch(t *testing.T) {
 	}
 
 	dispatchURL := ts.URL + "/relay/harness/workers/" + workerID + "/run"
-	resp, err := http.Post(dispatchURL, "application/json",
-		strings.NewReader(`{"run_id":"run-shared:step-1","provider":"claude","prompt":"pool test"}`))
+	resp, err := dispatchJob(dispatchURL, "tenant-pool", `{"run_id":"run-shared:step-1","provider":"claude","prompt":"pool test"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,4 +247,16 @@ func runMockHarnessWorkerTier(t *testing.T, ts *httptest.Server, workerID, tenan
 			return
 		}
 	}
+}
+
+// dispatchJob posts a harness job the way AgentRuntime does: internal token plus tenant.
+func dispatchJob(url, tenantID, body string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", "e2e-internal")
+	req.Header.Set("X-Tenant-Id", tenantID)
+	return http.DefaultClient.Do(req)
 }

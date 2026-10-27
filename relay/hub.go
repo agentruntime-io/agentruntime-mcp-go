@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+// dispatchTTL bounds how long a dispatched run_id stays valid for harness_complete.
+// It covers the longest harness job (timeout_s defaults to 3600) plus a reconnect.
+const dispatchTTL = 6 * time.Hour
+
 // Conn represents a live WebSocket session (MCP instance or harness worker).
 type Conn struct {
 	ID            string
@@ -24,12 +28,15 @@ type Conn struct {
 	Mux           *RequestMultiplexer
 }
 
-// Hub tracks live relay connections keyed by instance_id or worker_id.
+// Hub tracks live relay connections keyed by instance_id or (tenant_id, worker_id).
 type Hub struct {
-	mu sync.RWMutex
+	mu            sync.RWMutex
 	mcp           map[string]*Conn
-	harness       map[string]*Conn
+	harness       map[string]*Conn // key: harnessKey(tenant, worker)
 	harnessByUser map[string]string
+	// dispatched holds the run_ids sent to a worker, so harness_complete is
+	// only accepted for runs that were dispatched to that (tenant, worker).
+	dispatched     map[string]map[string]time.Time
 	onWorkerOnline func(workerID, tenantID, userID string)
 }
 
@@ -38,7 +45,18 @@ func NewHub() *Hub {
 		mcp:           make(map[string]*Conn),
 		harness:       make(map[string]*Conn),
 		harnessByUser: make(map[string]string),
+		dispatched:    make(map[string]map[string]time.Time),
 	}
+}
+
+// harnessKey qualifies a worker id with its tenant: ids such as workbench:{user_id}
+// are chosen by clients, so two tenants may present the same one.
+func harnessKey(tenantID, workerID string) string {
+	return tenantID + "\x00" + workerID
+}
+
+func connHarnessKey(c *Conn) string {
+	return harnessKey(c.TenantID, c.WorkerID)
 }
 
 func (h *Hub) SetOnWorkerOnline(fn func(workerID, tenantID, userID string)) {
@@ -62,6 +80,30 @@ func (h *Hub) RegisterMCP(instanceID string, c *Conn) {
 	h.mcp[instanceID] = c
 }
 
+// MCPHeldByOtherTenant reports whether instanceID is live for a tenant other than tenantID.
+func (h *Hub) MCPHeldByOtherTenant(instanceID, tenantID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	cur, ok := h.mcp[instanceID]
+	return ok && cur != nil && cur.TenantID != "" && tenantID != "" && cur.TenantID != tenantID
+}
+
+// TryRegisterMCP registers c unless another tenant's live connection already
+// holds instanceID; a later connect must not take over that tenant's connector.
+func (h *Hub) TryRegisterMCP(instanceID string, c *Conn) bool {
+	if instanceID == "" || c == nil {
+		return false
+	}
+	h.mu.Lock()
+	if cur, ok := h.mcp[instanceID]; ok && cur != nil && cur.TenantID != "" && c.TenantID != "" && cur.TenantID != c.TenantID {
+		h.mu.Unlock()
+		return false
+	}
+	h.mu.Unlock()
+	h.RegisterMCP(instanceID, c)
+	return true
+}
+
 func (h *Hub) RegisterHarness(workerID string, c *Conn) {
 	if workerID == "" || c == nil {
 		return
@@ -70,7 +112,7 @@ func (h *Hub) RegisterHarness(workerID string, c *Conn) {
 	c.WorkerID = workerID
 	c.Kind = "harness"
 	c.LastSeen = time.Now()
-	h.harness[workerID] = c
+	h.harness[connHarnessKey(c)] = c
 	if c.TenantID != "" && c.UserID != "" && strings.EqualFold(c.Tier, "heavy") {
 		h.harnessByUser[c.TenantID+"#"+c.UserID] = workerID
 	}
@@ -81,11 +123,14 @@ func (h *Hub) RegisterHarness(workerID string, c *Conn) {
 	}
 }
 
-func (h *Hub) UpdateHarnessCapabilities(workerID string, tier string, providers []string, maxConcurrent int) {
+// UpdateHarnessCapabilities records what the connection advertised in harness_register.
+func (h *Hub) UpdateHarnessCapabilities(c *Conn, tier string, providers []string, maxConcurrent int) {
+	if c == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	c, ok := h.harness[workerID]
-	if !ok || c == nil {
+	if cur, ok := h.harness[connHarnessKey(c)]; !ok || cur != c {
 		return
 	}
 	c.Tier = strings.ToLower(strings.TrimSpace(tier))
@@ -96,17 +141,20 @@ func (h *Hub) UpdateHarnessCapabilities(workerID string, tier string, providers 
 		c.MaxConcurrent = 1
 	}
 	if c.TenantID != "" && c.UserID != "" && strings.EqualFold(c.Tier, "heavy") {
-		h.harnessByUser[c.TenantID+"#"+c.UserID] = workerID
+		h.harnessByUser[c.TenantID+"#"+c.UserID] = c.WorkerID
 	}
 }
 
-func (h *Hub) IncHarnessActiveJobs(workerID string, delta int) {
+func (h *Hub) IncHarnessActiveJobs(c *Conn, delta int) {
+	if c == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if c, ok := h.harness[workerID]; ok && c != nil {
-		c.ActiveJobs += delta
-		if c.ActiveJobs < 0 {
-			c.ActiveJobs = 0
+	if cur, ok := h.harness[connHarnessKey(c)]; ok && cur != nil {
+		cur.ActiveJobs += delta
+		if cur.ActiveJobs < 0 {
+			cur.ActiveJobs = 0
 		}
 	}
 }
@@ -117,15 +165,34 @@ func (h *Hub) UnregisterMCP(instanceID string) {
 	delete(h.mcp, instanceID)
 }
 
-func (h *Hub) UnregisterHarness(workerID string) {
+// UnregisterMCPConn removes instanceID only while c is still the registered
+// connection, so a late close of a replaced session cannot evict its successor.
+func (h *Hub) UnregisterMCPConn(instanceID string, c *Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if c, ok := h.harness[workerID]; ok {
-		if c.TenantID != "" && c.UserID != "" {
-			delete(h.harnessByUser, c.TenantID+"#"+c.UserID)
-		}
+	if cur, ok := h.mcp[instanceID]; ok && cur == c {
+		delete(h.mcp, instanceID)
 	}
-	delete(h.harness, workerID)
+}
+
+// UnregisterHarness removes c, but only while c is still the connection
+// registered for its (tenant, worker): a reconnect replaces the old session,
+// and the old session closing later must not evict the new one.
+func (h *Hub) UnregisterHarness(c *Conn) {
+	if c == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	key := connHarnessKey(c)
+	cur, ok := h.harness[key]
+	if !ok || cur != c {
+		return
+	}
+	if c.TenantID != "" && c.UserID != "" {
+		delete(h.harnessByUser, c.TenantID+"#"+c.UserID)
+	}
+	delete(h.harness, key)
 }
 
 func (h *Hub) MCPOnline(instanceID string) bool {
@@ -135,10 +202,8 @@ func (h *Hub) MCPOnline(instanceID string) bool {
 	return ok
 }
 
-func (h *Hub) HarnessOnline(workerID string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	_, ok := h.harness[workerID]
+func (h *Hub) HarnessOnline(tenantID, workerID string) bool {
+	_, ok := h.GetHarness(tenantID, workerID)
 	return ok
 }
 
@@ -149,7 +214,7 @@ func (h *Hub) HarnessForUser(tenantID, userID string) (*Conn, bool) {
 	if !ok {
 		return nil, false
 	}
-	c, ok := h.harness[wid]
+	c, ok := h.harness[harnessKey(tenantID, wid)]
 	return c, ok
 }
 
@@ -226,11 +291,100 @@ func (h *Hub) GetMCP(instanceID string) (*Conn, bool) {
 	return c, ok
 }
 
-func (h *Hub) GetHarness(workerID string) (*Conn, bool) {
+// GetHarness returns the worker connected for tenantID. A worker that connected
+// without a tenant (shared pool, static dev token) serves every tenant, so it is
+// the fallback when the tenant has no worker of that id.
+func (h *Hub) GetHarness(tenantID, workerID string) (*Conn, bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	c, ok := h.harness[workerID]
-	return c, ok
+	if c, ok := h.harness[harnessKey(tenantID, workerID)]; ok {
+		return c, true
+	}
+	if tenantID != "" {
+		if c, ok := h.harness[harnessKey("", workerID)]; ok {
+			return c, true
+		}
+	}
+	return nil, false
+}
+
+// GetHarnessAnyTenant finds workerID when the caller did not name a tenant (the
+// legacy dispatch shape). It only answers when exactly one tenant has that id.
+func (h *Hub) GetHarnessAnyTenant(workerID string) (*Conn, bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	var found *Conn
+	for _, c := range h.harness {
+		if c == nil || c.WorkerID != workerID {
+			continue
+		}
+		if found != nil {
+			return nil, false
+		}
+		found = c
+	}
+	return found, found != nil
+}
+
+// TrackDispatch records that runID was sent to c, so its harness_complete is accepted.
+func (h *Hub) TrackDispatch(c *Conn, runID string) {
+	if c == nil || runID == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	now := time.Now()
+	key := connHarnessKey(c)
+	runs := h.dispatched[key]
+	if runs == nil {
+		runs = make(map[string]time.Time)
+		h.dispatched[key] = runs
+	}
+	for id, at := range runs {
+		if now.Sub(at) > dispatchTTL {
+			delete(runs, id)
+		}
+	}
+	runs[runID] = now
+}
+
+// ForgetDispatch undoes TrackDispatch when the job could not be sent.
+func (h *Hub) ForgetDispatch(c *Conn, runID string) {
+	if c == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	key := connHarnessKey(c)
+	if runs := h.dispatched[key]; runs != nil {
+		delete(runs, runID)
+		if len(runs) == 0 {
+			delete(h.dispatched, key)
+		}
+	}
+}
+
+// ConsumeDispatch reports whether runID was dispatched to c's (tenant, worker)
+// and has not completed yet, and marks it completed. The record is keyed by
+// worker identity rather than socket, so a worker that reconnects mid-job can
+// still deliver its result.
+func (h *Hub) ConsumeDispatch(c *Conn, runID string) bool {
+	if c == nil || runID == "" {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	key := connHarnessKey(c)
+	runs := h.dispatched[key]
+	at, ok := runs[runID]
+	if !ok {
+		return false
+	}
+	delete(runs, runID)
+	if len(runs) == 0 {
+		delete(h.dispatched, key)
+	}
+	return time.Since(at) <= dispatchTTL
 }
 
 func (h *Hub) Touch(conn *Conn) {

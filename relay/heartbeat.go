@@ -101,7 +101,7 @@ func (h *Hub) sweepStale(onMCPOffline, onHarnessOffline func(*Conn, string)) {
 		}
 	}
 	for _, item := range staleHarness {
-		log.Printf("relay: evicting stale harness worker %s", item.id)
+		log.Printf("relay: evicting stale harness worker %s (tenant=%s)", item.conn.WorkerID, item.conn.TenantID)
 		if onHarnessOffline != nil {
 			onHarnessOffline(item.conn, "heartbeat_timeout")
 		}
