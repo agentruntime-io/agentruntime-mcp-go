@@ -8,8 +8,6 @@ import (
 
 	"encoding/json"
 
-	"errors"
-
 	"io"
 
 	"log"
@@ -60,7 +58,30 @@ var upgrader = websocket.Upgrader{
 
 type ServerConfig struct {
 
+	// AuthToken is a static bearer accepted on WSS connect (RELAY_AUTH_TOKEN, dev).
+	// The tenant and user of such a connection are whatever the client claims.
+
 	AuthToken            string
+
+	// Verifier validates PAT / Keycloak JWT bearers on WSS connect and supplies the
+	// tenant and user the connection is bound to. Nil unless configured.
+
+	Verifier             TokenVerifier
+
+	// InternalToken is the X-Internal-Token AgentRuntime must send to dispatch a
+	// harness job or pick a shared worker (MCP_CONTROL_INTERNAL_TOKEN).
+
+	InternalToken        string
+
+	// AllowInsecure turns authentication off (RELAY_ALLOW_INSECURE, local dev only).
+
+	AllowInsecure        bool
+
+	// AllowLegacyDispatch accepts dispatch/pick requests that carry no
+	// X-Internal-Token or X-Tenant-Id (RELAY_ALLOW_LEGACY_DISPATCH), for the rollout
+	// window while AgentRuntime still sends the old shape. Remove it afterwards.
+
+	AllowLegacyDispatch  bool
 
 	PublicBaseURL        string // https://relay.example.com — used for canonical_url callbacks
 
@@ -105,6 +126,8 @@ func NewServer(cfg ServerConfig) *Server {
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	s.startHeartbeat()
+
+	s.logAuthMode()
 
 	mux.HandleFunc(MCPConnectPath, s.handleMCPConnect)
 
@@ -162,39 +185,6 @@ func (s *Server) onHarnessOffline(c *Conn, reason string) {
 
 
 
-func (s *Server) authorizeConnect(r *http.Request) error {
-
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-
-	if auth == "" {
-
-		return errors.New("missing authorization")
-
-	}
-
-	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-
-		return errors.New("authorization must be bearer token")
-
-	}
-
-	token := strings.TrimSpace(auth[7:])
-
-	if token == "" {
-
-		return errors.New("empty bearer token")
-
-	}
-
-	if s.Config.AuthToken != "" && token != s.Config.AuthToken {
-
-		return errors.New("invalid bearer token")
-
-	}
-
-	return nil
-
-}
 
 
 
@@ -224,9 +214,11 @@ func (s *Server) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 
 	}
 
-	if err := s.authorizeConnect(r); err != nil {
+	id, status, err := s.authenticateConnect(r)
 
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	if err != nil {
+
+		http.Error(w, err.Error(), status)
 
 		return
 
@@ -242,9 +234,17 @@ func (s *Server) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 
 	}
 
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+	tenantID := id.TenantID
 
-	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	userID := id.UserID
+
+	if s.Hub.MCPHeldByOtherTenant(instanceID, tenantID) {
+
+		http.Error(w, "instance_id is connected for another tenant", http.StatusConflict)
+
+		return
+
+	}
 
 
 
@@ -278,7 +278,13 @@ func (s *Server) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 
 	}
 
-	s.Hub.RegisterMCP(instanceID, conn)
+	if !s.Hub.TryRegisterMCP(instanceID, conn) {
+
+		_ = ws.Close()
+
+		return
+
+	}
 
 	if s.Config.ControlCallback != nil {
 
@@ -294,7 +300,7 @@ func (s *Server) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 
-		s.Hub.UnregisterMCP(instanceID)
+		s.Hub.UnregisterMCPConn(instanceID, conn)
 
 		if s.Config.ControlCallback != nil {
 
@@ -384,195 +390,6 @@ func (s *Server) dispatchMCPInbound(conn *Conn, msg []byte) {
 
 
 
-func (s *Server) handleHarnessConnect(w http.ResponseWriter, r *http.Request) {
-
-	if r.Method != http.MethodGet {
-
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-
-		return
-
-	}
-
-	if err := s.authorizeConnect(r); err != nil {
-
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-
-		return
-
-	}
-
-	workerID := strings.TrimSpace(r.URL.Query().Get("worker_id"))
-
-	if workerID == "" {
-
-		workerID = uuid.NewString()
-
-	}
-
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
-
-	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
-
-	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
-
-	tier := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tier")))
-
-
-
-	ws, err := upgrader.Upgrade(w, r, nil)
-
-	if err != nil {
-
-		return
-
-	}
-
-
-
-	conn := &Conn{
-
-		ID:       uuid.NewString(),
-
-		WorkerID: workerID,
-
-		TenantID: tenantID,
-
-		UserID:   userID,
-
-		Provider: provider,
-
-		Tier:     tier,
-
-		Send: func(b []byte) error {
-
-			return ws.WriteMessage(websocket.TextMessage, b)
-
-		},
-
-	}
-
-	if tier != "" {
-
-		conn.Tier = tier
-
-	}
-
-	s.Hub.RegisterHarness(workerID, conn)
-
-	if s.Config.OrchestratorCallback != nil {
-
-		cb := s.Config.OrchestratorCallback
-
-		go cb.NotifyWorkerOnline(context.Background(), workerID, tenantID, userID)
-
-	}
-
-	defer func() {
-
-		s.Hub.UnregisterHarness(workerID)
-
-		_ = ws.Close()
-
-	}()
-
-
-
-	log.Printf("relay: harness worker %s connected (tenant=%s user=%s tier=%s)", workerID, tenantID, userID, tier)
-
-	_ = conn.Send(mustJSON(map[string]any{"type": "harness_registered", "worker_id": workerID}))
-
-
-
-	for {
-
-		_, msg, err := ws.ReadMessage()
-
-		if err != nil {
-
-			return
-
-		}
-
-		s.Hub.Touch(conn)
-
-		s.dispatchHarnessInbound(conn, msg)
-
-	}
-
-}
-
-
-
-func (s *Server) dispatchHarnessInbound(conn *Conn, msg []byte) {
-
-	var frame struct {
-
-		Type         string   `json:"type"`
-
-		RunID        string   `json:"run_id"`
-
-		Status       string   `json:"status"`
-
-		Result       map[string]any `json:"result"`
-
-		Error        string   `json:"error"`
-
-		WorkerID     string   `json:"worker_id"`
-
-		Capabilities struct {
-
-			Tier          string   `json:"tier"`
-
-			Providers     []string `json:"providers"`
-
-			MaxConcurrent int      `json:"max_concurrent"`
-
-		} `json:"capabilities"`
-
-	}
-
-	if err := json.Unmarshal(msg, &frame); err != nil {
-
-		return
-
-	}
-
-	switch frame.Type {
-
-	case "pong", "heartbeat":
-
-		return
-
-	case "harness_register":
-
-		workerID := conn.WorkerID
-
-		if frame.WorkerID != "" {
-
-			workerID = frame.WorkerID
-
-		}
-
-		s.Hub.UpdateHarnessCapabilities(workerID, frame.Capabilities.Tier, frame.Capabilities.Providers, frame.Capabilities.MaxConcurrent)
-
-	case "harness_complete":
-
-		s.Hub.IncHarnessActiveJobs(conn.WorkerID, -1)
-
-		log.Printf("relay: harness run %s completed status=%s", frame.RunID, frame.Status)
-
-		if s.Config.OrchestratorCallback != nil {
-
-			cb := s.Config.OrchestratorCallback
-
-			go cb.NotifyRunComplete(context.Background(), frame.RunID, frame.Status, frame.Result, frame.Error)
-
-		}
-
-	}
-
-}
 
 
 
@@ -690,131 +507,6 @@ func (s *Server) handleMCPForward(w http.ResponseWriter, r *http.Request) {
 
 
 
-func (s *Server) handleHarnessPick(w http.ResponseWriter, r *http.Request) {
-
-	if r.Method != http.MethodGet {
-
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-
-		return
-
-	}
-
-	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
-
-	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
-
-	tier := strings.TrimSpace(r.URL.Query().Get("tier"))
-
-	conn, ok := s.Hub.PickSharedWorker(tenantID, provider, tier)
-
-	if !ok {
-
-		http.Error(w, "no shared worker available", http.StatusServiceUnavailable)
-
-		return
-
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-
-		"worker_id":      conn.WorkerID,
-
-		"tier":           conn.Tier,
-
-		"active_jobs":    conn.ActiveJobs,
-
-		"max_concurrent": conn.MaxConcurrent,
-
-	})
-
-}
-
-
-
-func (s *Server) handleHarnessRun(w http.ResponseWriter, r *http.Request) {
-
-	if r.Method != http.MethodPost {
-
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-
-		return
-
-	}
-
-	path := strings.TrimPrefix(r.URL.Path, HarnessWorkerPrefix)
-
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-
-	if len(parts) == 0 || parts[0] == "" {
-
-		http.Error(w, "worker_id required", http.StatusBadRequest)
-
-		return
-
-	}
-
-	workerID := parts[0]
-
-	conn, ok := s.Hub.GetHarness(workerID)
-
-	if !ok {
-
-		http.Error(w, "harness worker not connected", http.StatusServiceUnavailable)
-
-		return
-
-	}
-
-	body, err := io.ReadAll(r.Body)
-
-	if err != nil {
-
-		http.Error(w, "read body", http.StatusBadRequest)
-
-		return
-
-	}
-
-	var job map[string]any
-
-	if err := json.Unmarshal(body, &job); err != nil {
-
-		http.Error(w, "invalid json", http.StatusBadRequest)
-
-		return
-
-	}
-
-	runID, _ := job["run_id"].(string)
-
-	if runID == "" {
-
-		runID = uuid.NewString()
-
-		job["run_id"] = runID
-
-	}
-
-	job["type"] = "harness_run"
-
-	job["id"] = uuid.NewString()
-
-	s.Hub.IncHarnessActiveJobs(workerID, 1)
-
-	if err := conn.Send(mustJSON(job)); err != nil {
-
-		s.Hub.IncHarnessActiveJobs(workerID, -1)
-
-		http.Error(w, "forward failed", http.StatusBadGateway)
-
-		return
-
-	}
-
-	writeJSON(w, http.StatusAccepted, map[string]any{"status": "dispatched", "run_id": runID})
-
-}
 
 
 

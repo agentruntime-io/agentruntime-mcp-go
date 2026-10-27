@@ -41,13 +41,18 @@ func (c *OrchestratorCallback) NotifyWorkerOnline(ctx context.Context, workerID,
 	_ = c.post(ctx, "/api/v1/internal/harness/worker-online", body)
 }
 
-func (c *OrchestratorCallback) NotifyRunComplete(ctx context.Context, runID, status string, result map[string]any, errMsg string) {
+// NotifyRunComplete reports a finished run. tenantID and workerID come from the
+// authenticated connection that sent harness_complete, so AgentRuntime can check
+// the run belongs to that tenant.
+func (c *OrchestratorCallback) NotifyRunComplete(ctx context.Context, tenantID, workerID, runID, status string, result map[string]any, errMsg string) {
 	if c == nil || c.BaseURL == "" {
 		return
 	}
 	payload := map[string]any{
-		"run_id": runID,
-		"status": status,
+		"run_id":    runID,
+		"tenant_id": tenantID,
+		"worker_id": workerID,
+		"status":    status,
 	}
 	if result != nil {
 		payload["result"] = result
