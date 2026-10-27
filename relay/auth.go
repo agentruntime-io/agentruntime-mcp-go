@@ -108,6 +108,17 @@ func checkWorkerID(workerID string, id connectIdentity) error {
 // through, with a warning; a request that carries a wrong token is always refused.
 // RELAY_ALLOW_INSECURE (local dev) lets everything through.
 func (s *Server) authorizeInternal(r *http.Request) (int, string) {
+	return s.checkInternalToken(r, s.Config.AllowLegacyDispatch)
+}
+
+// authorizeInternalStrict is authorizeInternal without the legacy window: the
+// requests it guards are new, so no old caller needs the exception, and what
+// they return (the workers and agents of a tenant) must never be served unauthenticated.
+func (s *Server) authorizeInternalStrict(r *http.Request) (int, string) {
+	return s.checkInternalToken(r, false)
+}
+
+func (s *Server) checkInternalToken(r *http.Request, allowLegacy bool) (int, string) {
 	want := s.Config.InternalToken
 	got := strings.TrimSpace(r.Header.Get("X-Internal-Token"))
 	if s.Config.AllowInsecure {
@@ -119,7 +130,7 @@ func (s *Server) authorizeInternal(r *http.Request) (int, string) {
 		}
 		return 0, ""
 	}
-	if got == "" && s.Config.AllowLegacyDispatch {
+	if got == "" && allowLegacy {
 		log.Printf("relay: accepting %s %s without X-Internal-Token (RELAY_ALLOW_LEGACY_DISPATCH)", r.Method, r.URL.Path)
 		return 0, ""
 	}

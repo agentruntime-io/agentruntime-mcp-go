@@ -89,6 +89,7 @@ func (h *Hub) sweepStale(onMCPOffline, onHarnessOffline func(*Conn, string)) {
 			if c.TenantID != "" && c.UserID != "" {
 				delete(h.harnessByUser, c.TenantID+"#"+c.UserID)
 			}
+			h.markHarnessOfflineLocked(c, now)
 		}
 		delete(h.harness, item.id)
 	}
