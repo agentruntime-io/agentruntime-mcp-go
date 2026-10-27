@@ -139,6 +139,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc(HarnessPickPath, s.handleHarnessPick)
 
+	mux.HandleFunc(HarnessWorkersPath, s.handleHarnessWorkers)
+
 }
 
 

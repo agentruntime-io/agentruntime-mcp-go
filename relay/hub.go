@@ -34,6 +34,9 @@ type Hub struct {
 	mcp           map[string]*Conn
 	harness       map[string]*Conn // key: harnessKey(tenant, worker)
 	harnessByUser map[string]string
+	// harnessWorkers is the registry of what each worker advertised; it keeps a
+	// worker's last advertisement after it disconnects (see harness_registry.go).
+	harnessWorkers map[string]*harnessWorkerRecord
 	// dispatched holds the run_ids sent to a worker, so harness_complete is
 	// only accepted for runs that were dispatched to that (tenant, worker).
 	dispatched     map[string]map[string]time.Time
@@ -42,10 +45,11 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		mcp:           make(map[string]*Conn),
-		harness:       make(map[string]*Conn),
-		harnessByUser: make(map[string]string),
-		dispatched:    make(map[string]map[string]time.Time),
+		mcp:            make(map[string]*Conn),
+		harness:        make(map[string]*Conn),
+		harnessByUser:  make(map[string]string),
+		harnessWorkers: make(map[string]*harnessWorkerRecord),
+		dispatched:     make(map[string]map[string]time.Time),
 	}
 }
 
@@ -113,6 +117,7 @@ func (h *Hub) RegisterHarness(workerID string, c *Conn) {
 	c.Kind = "harness"
 	c.LastSeen = time.Now()
 	h.harness[connHarnessKey(c)] = c
+	h.touchHarnessRecordLocked(c, c.LastSeen)
 	if c.TenantID != "" && c.UserID != "" && strings.EqualFold(c.Tier, "heavy") {
 		h.harnessByUser[c.TenantID+"#"+c.UserID] = workerID
 	}
@@ -139,6 +144,11 @@ func (h *Hub) UpdateHarnessCapabilities(c *Conn, tier string, providers []string
 		c.MaxConcurrent = maxConcurrent
 	} else if c.MaxConcurrent <= 0 {
 		c.MaxConcurrent = 1
+	}
+	if rec := h.harnessWorkers[connHarnessKey(c)]; rec != nil && rec.conn == c {
+		rec.tier = c.Tier
+		rec.providers = sanitizeProviders(c.Providers)
+		rec.maxConcurrent = c.MaxConcurrent
 	}
 	if c.TenantID != "" && c.UserID != "" && strings.EqualFold(c.Tier, "heavy") {
 		h.harnessByUser[c.TenantID+"#"+c.UserID] = c.WorkerID
@@ -193,6 +203,7 @@ func (h *Hub) UnregisterHarness(c *Conn) {
 		delete(h.harnessByUser, c.TenantID+"#"+c.UserID)
 	}
 	delete(h.harness, key)
+	h.markHarnessOfflineLocked(c, time.Now())
 }
 
 func (h *Hub) MCPOnline(instanceID string) bool {

@@ -12,6 +12,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// HarnessWorkersPath lists the harness workers of a tenant and the agents they advertised.
+const HarnessWorkersPath = "/relay/harness/workers"
+
 // maxHarnessJobBytes bounds a dispatched job body (prompt, config, headers).
 const maxHarnessJobBytes = 8 << 20
 
@@ -89,6 +92,9 @@ func (s *Server) dispatchHarnessInbound(conn *Conn, msg []byte) {
 			Tier          string   `json:"tier"`
 			Providers     []string `json:"providers"`
 			MaxConcurrent int      `json:"max_concurrent"`
+			// Setups is the agents the worker offers. It stays raw so a malformed
+			// list cannot cost the frame its tier and providers.
+			Setups json.RawMessage `json:"setups"`
 		} `json:"capabilities"`
 	}
 	if err := json.Unmarshal(msg, &frame); err != nil {
@@ -104,6 +110,7 @@ func (s *Server) dispatchHarnessInbound(conn *Conn, msg []byte) {
 			log.Printf("relay: harness worker %s sent harness_register for %q; keeping the connect-time id", conn.WorkerID, frame.WorkerID)
 		}
 		s.Hub.UpdateHarnessCapabilities(conn, frame.Capabilities.Tier, frame.Capabilities.Providers, frame.Capabilities.MaxConcurrent)
+		s.Hub.SetHarnessAgents(conn, parseHarnessSetups(frame.Capabilities.Setups))
 	case "harness_complete":
 		if !s.Hub.ConsumeDispatch(conn, frame.RunID) {
 			log.Printf("relay: dropping harness_complete for run %q from worker %s (tenant=%s): not dispatched to this worker", frame.RunID, conn.WorkerID, conn.TenantID)
@@ -210,4 +217,25 @@ func (s *Server) handleHarnessRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "dispatched", "run_id": runID})
+}
+
+// handleHarnessWorkers lists a tenant's harness workers with the agents each
+// advertised, online or last seen. AgentRuntime calls it with X-Internal-Token;
+// tenant_id is required, and user_id leaves out the workers of other users.
+func (s *Server) handleHarnessWorkers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if code, msg := s.authorizeInternalStrict(r); code != 0 {
+		http.Error(w, msg, code)
+		return
+	}
+	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+	if tenantID == "" {
+		http.Error(w, "tenant_id required", http.StatusBadRequest)
+		return
+	}
+	userID := strings.TrimSpace(r.URL.Query().Get("user_id"))
+	writeJSON(w, http.StatusOK, map[string]any{"workers": s.Hub.ListHarnessWorkers(tenantID, userID)})
 }
