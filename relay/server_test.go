@@ -33,18 +33,14 @@ func TestHandleMCPForward_syncResponse(t *testing.T) {
 	}
 	h.RegisterMCP("inst-1", conn)
 
-	srv := relay.NewServer(relay.ServerConfig{})
+	srv := relay.NewServer(relay.ServerConfig{AuthToken: authTestToken})
 	srv.Hub = h
 	m := http.NewServeMux()
 	srv.RegisterRoutes(m)
 	ts := httptest.NewServer(m)
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/relay/mcp/instances/inst-1", "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+	resp := relayDo(t, http.MethodPost, ts.URL+"/relay/mcp/instances/inst-1", authTestToken, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -66,18 +62,14 @@ func TestHandleHarnessPick(t *testing.T) {
 	}
 	h.RegisterHarness("shared:a", conn)
 
-	srv := relay.NewServer(relay.ServerConfig{})
+	srv := relay.NewServer(relay.ServerConfig{AuthToken: authTestToken})
 	srv.Hub = h
 	m := http.NewServeMux()
 	srv.RegisterRoutes(m)
 	ts := httptest.NewServer(m)
 	defer ts.Close()
 
-	resp, err := http.Get(ts.URL + "/relay/harness/pick?tenant_id=t1&provider=codex&tier=lightweight")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+	resp := relayDo(t, http.MethodGet, ts.URL+"/relay/harness/pick?tenant_id=t1&provider=codex&tier=lightweight", authTestToken, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}

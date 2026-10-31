@@ -74,6 +74,7 @@ func TestHarnessE2E_FullRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer e2e-token")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -118,12 +119,8 @@ func TestHarnessE2E_OfflineDispatchThenReconnect(t *testing.T) {
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL+"/relay/harness/workers/workbench:offline-user/run", "application/json",
-		strings.NewReader(`{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
+	resp := relayDo(t, http.MethodPost, ts.URL+"/relay/harness/workers/workbench:offline-user/run", "e2e-token",
+		`{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`)
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 when worker offline, got %d", resp.StatusCode)
 	}
@@ -132,12 +129,8 @@ func TestHarnessE2E_OfflineDispatchThenReconnect(t *testing.T) {
 	go runMockHarnessWorker(t, ts, "workbench:offline-user", "tenant-1", "offline-user", "heavy", workerDone)
 	time.Sleep(100 * time.Millisecond)
 
-	resp2, err := http.Post(ts.URL+"/relay/harness/workers/workbench:offline-user/run", "application/json",
-		strings.NewReader(`{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp2.Body.Close()
+	resp2 := relayDo(t, http.MethodPost, ts.URL+"/relay/harness/workers/workbench:offline-user/run", "e2e-token",
+		`{"run_id":"run-q:step-1","provider":"codex","prompt":"queued"}`)
 	if resp2.StatusCode != http.StatusAccepted {
 		b, _ := io.ReadAll(resp2.Body)
 		t.Fatalf("expected 202 after reconnect, got %d %s", resp2.StatusCode, string(b))
@@ -161,11 +154,7 @@ func TestHarnessE2E_SharedWorkerPickAndDispatch(t *testing.T) {
 	go runMockHarnessWorkerTier(t, ts, "shared:pool-1", "tenant-pool", "", "lightweight", []string{"claude"}, workerDone)
 	time.Sleep(100 * time.Millisecond)
 
-	pickResp, err := http.Get(ts.URL + "/relay/harness/pick?tenant_id=tenant-pool&provider=claude&tier=lightweight")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pickResp.Body.Close()
+	pickResp := relayDo(t, http.MethodGet, ts.URL+"/relay/harness/pick?tenant_id=tenant-pool&provider=claude&tier=lightweight", "e2e-token", "")
 	if pickResp.StatusCode != http.StatusOK {
 		t.Fatalf("pick failed: %d", pickResp.StatusCode)
 	}
@@ -179,12 +168,8 @@ func TestHarnessE2E_SharedWorkerPickAndDispatch(t *testing.T) {
 	}
 
 	dispatchURL := ts.URL + "/relay/harness/workers/" + workerID + "/run"
-	resp, err := http.Post(dispatchURL, "application/json",
-		strings.NewReader(`{"run_id":"run-shared:step-1","provider":"claude","prompt":"pool test"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
+	resp := relayDo(t, http.MethodPost, dispatchURL, "e2e-token",
+		`{"run_id":"run-shared:step-1","provider":"claude","prompt":"pool test"}`)
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("dispatch to shared worker: %d", resp.StatusCode)
 	}

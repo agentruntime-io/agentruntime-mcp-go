@@ -24,7 +24,9 @@ type RouterEnv struct {
 	// Example: https://router.agentruntime.io or http://127.0.0.1:8340
 	PublicBaseURL string
 
-	// Optional static bearer for WSS connect when not using PAT/JWT.
+	// Static relay token (RELAY_AUTH_TOKEN), required on every relay route: WSS connect, MCP forward, harness
+	// run and pick. Callers send it as Authorization: Bearer <token> or X-Relay-Token. When empty the relay
+	// rejects every request (fail closed).
 	AuthToken string
 }
 

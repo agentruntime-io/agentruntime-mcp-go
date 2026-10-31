@@ -154,8 +154,12 @@ func (h *Hub) HarnessForUser(tenantID, userID string) (*Conn, bool) {
 }
 
 // PickSharedWorker selects the least-loaded lightweight harness worker for tenant+provider.
+// An empty tenantID picks nothing: it would otherwise match every tenant's worker.
 func (h *Hub) PickSharedWorker(tenantID, provider, tier string) (*Conn, bool) {
 	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		return nil, false
+	}
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	tier = strings.ToLower(strings.TrimSpace(tier))
 	if tier == "" {

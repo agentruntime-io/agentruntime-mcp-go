@@ -60,6 +60,26 @@ func TestPickSharedWorker_skipsAtCapacity(t *testing.T) {
 	}
 }
 
+func TestPickSharedWorker_emptyTenantNeverMatches(t *testing.T) {
+	h := relay.NewHub()
+	h.RegisterHarness("shared:1", &relay.Conn{
+		WorkerID: "shared:1", TenantID: "t1", Tier: "lightweight",
+		Providers: []string{"codex"}, MaxConcurrent: 2,
+		Send: func([]byte) error { return nil },
+	})
+	// An untenanted worker is the one a blank tenant filter used to be able to hand to anybody.
+	h.RegisterHarness("shared:2", &relay.Conn{
+		WorkerID: "shared:2", Tier: "lightweight",
+		Providers: []string{"codex"}, MaxConcurrent: 2,
+		Send: func([]byte) error { return nil },
+	})
+	for _, tenantID := range []string{"", "   "} {
+		if got, ok := h.PickSharedWorker(tenantID, "codex", "lightweight"); ok {
+			t.Fatalf("tenant %q must pick nothing, got %s", tenantID, got.WorkerID)
+		}
+	}
+}
+
 func TestRequestMultiplexerRoundTrip(t *testing.T) {
 	mux := relay.NewRequestMultiplexer(0)
 	ch := mux.Register("req-1")

@@ -8,8 +8,6 @@ import (
 
 	"encoding/json"
 
-	"errors"
-
 	"io"
 
 	"log"
@@ -60,7 +58,7 @@ var upgrader = websocket.Upgrader{
 
 type ServerConfig struct {
 
-	AuthToken            string
+	AuthToken            string // required on every relay route; empty rejects all requests
 
 	PublicBaseURL        string // https://relay.example.com — used for canonical_url callbacks
 
@@ -102,19 +100,27 @@ func NewServer(cfg ServerConfig) *Server {
 
 
 
+// RegisterRoutes mounts every relay route behind requireAuth. Register new relay routes here and nowhere else,
+// so none can be reachable without the relay token.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	s.startHeartbeat()
 
-	mux.HandleFunc(MCPConnectPath, s.handleMCPConnect)
+	if strings.TrimSpace(s.Config.AuthToken) == "" {
 
-	mux.HandleFunc(HarnessConnectPath, s.handleHarnessConnect)
+		log.Printf("relay: WARNING RELAY_AUTH_TOKEN is not set; every relay route will answer 401 until it is configured")
 
-	mux.HandleFunc(MCPInstancePrefix, s.handleMCPForward)
+	}
 
-	mux.HandleFunc(HarnessWorkerPrefix, s.handleHarnessRun)
+	mux.HandleFunc(MCPConnectPath, s.requireAuth(s.handleMCPConnect))
 
-	mux.HandleFunc(HarnessPickPath, s.handleHarnessPick)
+	mux.HandleFunc(HarnessConnectPath, s.requireAuth(s.handleHarnessConnect))
+
+	mux.HandleFunc(MCPInstancePrefix, s.requireAuth(s.handleMCPForward))
+
+	mux.HandleFunc(HarnessWorkerPrefix, s.requireAuth(s.handleHarnessRun))
+
+	mux.HandleFunc(HarnessPickPath, s.requireAuth(s.handleHarnessPick))
 
 }
 
@@ -162,42 +168,6 @@ func (s *Server) onHarnessOffline(c *Conn, reason string) {
 
 
 
-func (s *Server) authorizeConnect(r *http.Request) error {
-
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-
-	if auth == "" {
-
-		return errors.New("missing authorization")
-
-	}
-
-	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-
-		return errors.New("authorization must be bearer token")
-
-	}
-
-	token := strings.TrimSpace(auth[7:])
-
-	if token == "" {
-
-		return errors.New("empty bearer token")
-
-	}
-
-	if s.Config.AuthToken != "" && token != s.Config.AuthToken {
-
-		return errors.New("invalid bearer token")
-
-	}
-
-	return nil
-
-}
-
-
-
 func (s *Server) instanceCanonicalURL(instanceID string) string {
 
 	base := strings.TrimRight(strings.TrimSpace(s.Config.PublicBaseURL), "/")
@@ -219,14 +189,6 @@ func (s *Server) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-
-		return
-
-	}
-
-	if err := s.authorizeConnect(r); err != nil {
-
-		http.Error(w, err.Error(), http.StatusUnauthorized)
 
 		return
 
@@ -389,14 +351,6 @@ func (s *Server) handleHarnessConnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-
-		return
-
-	}
-
-	if err := s.authorizeConnect(r); err != nil {
-
-		http.Error(w, err.Error(), http.StatusUnauthorized)
 
 		return
 
@@ -638,7 +592,7 @@ func (s *Server) handleMCPForward(w http.ResponseWriter, r *http.Request) {
 
 		"headers": map[string]string{
 
-			"authorization":     r.Header.Get("Authorization"),
+			"authorization":     s.downstreamAuthorization(r),
 
 			"x-mcp-instance-id": instanceID,
 
@@ -701,6 +655,14 @@ func (s *Server) handleHarnessPick(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID := strings.TrimSpace(r.URL.Query().Get("tenant_id"))
+
+	if tenantID == "" {
+
+		http.Error(w, "tenant_id required", http.StatusBadRequest)
+
+		return
+
+	}
 
 	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
 
