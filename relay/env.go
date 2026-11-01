@@ -25,9 +25,29 @@ type RouterEnv struct {
 	PublicBaseURL string
 
 	// Static relay token (RELAY_AUTH_TOKEN), required on every relay route: WSS connect, MCP forward, harness
-	// run and pick. Callers send it as Authorization: Bearer <token> or X-Relay-Token. When empty the relay
-	// rejects every request (fail closed).
+	// run and pick. Callers send it as Authorization: Bearer <token> or X-Relay-Token. Harness connect also
+	// takes a user token when RELAY_USER_JWT_* is set (see UserJWTFromEnv). When no credential is configured
+	// the relay rejects every request (fail closed).
 	AuthToken string
+}
+
+// UserJWTFromEnv reads the settings for verifying an IDE user's platform access token on harness connect:
+// RELAY_USER_JWT_ISSUER (the Keycloak realm URL), RELAY_USER_JWT_AUDIENCE (e.g. https://mcp.agentruntime.io,
+// the audience of the platform's access tokens) and RELAY_USER_JWT_JWKS_URL (<issuer>/protocol/openid-connect/certs).
+// They are separate from the MCP OAuth settings on purpose: setting those would also turn on OAuth for every
+// adapter route. All three are needed; with fewer, ok is false and harness connect takes the relay token only.
+func UserJWTFromEnv() (issuer, audience, jwksURL string, ok bool) {
+	issuer = trimURL(os.Getenv("RELAY_USER_JWT_ISSUER"))
+	audience = strings.TrimSpace(os.Getenv("RELAY_USER_JWT_AUDIENCE"))
+	jwksURL = strings.TrimSpace(os.Getenv("RELAY_USER_JWT_JWKS_URL"))
+	if issuer == "" && audience == "" && jwksURL == "" {
+		return "", "", "", false
+	}
+	if issuer == "" || audience == "" || jwksURL == "" {
+		log.Printf("relay: RELAY_USER_JWT_ISSUER, RELAY_USER_JWT_AUDIENCE and RELAY_USER_JWT_JWKS_URL must all be set; user-token auth on harness connect is off")
+		return "", "", "", false
+	}
+	return issuer, audience, jwksURL, true
 }
 
 // LoadRouterEnv reads relay env vars from the router process environment.

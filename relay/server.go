@@ -58,7 +58,9 @@ var upgrader = websocket.Upgrader{
 
 type ServerConfig struct {
 
-	AuthToken            string // required on every relay route; empty rejects all requests
+	AuthToken            string // required on every route except harness connect, which also takes a user token; empty disables the relay-token path
+
+	UserVerifier         UserTokenVerifier // optional: lets an IDE connect harness workers with its user token instead of AuthToken
 
 	PublicBaseURL        string // https://relay.example.com — used for canonical_url callbacks
 
@@ -100,21 +102,28 @@ func NewServer(cfg ServerConfig) *Server {
 
 
 
-// RegisterRoutes mounts every relay route behind requireAuth. Register new relay routes here and nowhere else,
-// so none can be reachable without the relay token.
+// RegisterRoutes mounts every relay route behind authentication. Register new relay routes here and nowhere
+// else, so none can be reachable without credentials. The relay token guards every route; harness connect also
+// takes a user token when UserVerifier is set.
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	s.startHeartbeat()
 
 	if strings.TrimSpace(s.Config.AuthToken) == "" {
 
-		log.Printf("relay: WARNING RELAY_AUTH_TOKEN is not set; every relay route will answer 401 until it is configured")
+		log.Printf("relay: WARNING RELAY_AUTH_TOKEN is not set; every relay route except harness connect will answer 401 until it is configured")
+
+	}
+
+	if s.Config.UserVerifier == nil {
+
+		log.Printf("relay: user token verification is not configured; harness connect needs the relay token")
 
 	}
 
 	mux.HandleFunc(MCPConnectPath, s.requireAuth(s.handleMCPConnect))
 
-	mux.HandleFunc(HarnessConnectPath, s.requireAuth(s.handleHarnessConnect))
+	mux.HandleFunc(HarnessConnectPath, s.requireHarnessConnectAuth(s.handleHarnessConnect))
 
 	mux.HandleFunc(MCPInstancePrefix, s.requireAuth(s.handleMCPForward))
 

@@ -103,7 +103,19 @@ func (v *jwtVerifier) getKeys(ctx context.Context) (map[string]any, error) {
 	return v.refreshKeys(ctx)
 }
 
+// jwksMinRefresh is how long fetched keys are reused before an unknown key id may trigger another fetch. Without
+// it, unauthenticated requests carrying forged key ids would make every one of them hit the issuer's JWKS URL.
+const jwksMinRefresh = 10 * time.Second
+
 func (v *jwtVerifier) refreshKeys(ctx context.Context) (map[string]any, error) {
+	v.mu.Lock()
+	if len(v.keys) > 0 && time.Since(v.cachedAt) < jwksMinRefresh {
+		keys := v.keys
+		v.mu.Unlock()
+		return keys, nil
+	}
+	v.mu.Unlock()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
 	if err != nil {
 		return nil, err

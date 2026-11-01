@@ -73,6 +73,10 @@ func RunWithRouter(configPath string) error {
 	}
 
 	relayCfg := relay.ServerConfigFromEnv()
+	if issuer, audience, jwksURL, ok := relay.UserJWTFromEnv(); ok {
+		relayCfg.UserVerifier = newRelayUserVerifier(newJWTVerifier(issuer, audience, jwksURL))
+		log.Printf("Relay user-token auth enabled on %s", relay.HarnessConnectPath)
+	}
 	if relayCfg.OrchestratorCallback != nil {
 		log.Printf("Harness orchestrator callbacks enabled")
 	}
