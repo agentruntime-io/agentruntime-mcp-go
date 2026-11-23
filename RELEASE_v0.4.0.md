@@ -32,7 +32,12 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
   **`unregister-webhook`** routes under `/{adapter}/inbound/`, called by **control** (not the BFF). The SDK owns the token
   check, request parsing, the check that `webhook_url` is this adapter's own route for this token, and the response shapes
   (`{ok, webhook_url, registered_scope, vendor_ids, vendor_secret?}`). A connector supplies only the vendor calls.
-  `InboundBadRequest` marks a permanent scope error (400); any other error is a retryable 502.
+  `InboundBadRequest` marks a permanent scope error (400); any other error is a retryable 502. Request fields:
+  `connection_id`, `server_id`, `scope`, `webhook_url`, `vendor_secret` and the optional `vendor_ids` (what the last
+  register returned, echoed by control so a vendor with no list call can still be unregistered). Tenant context stays in
+  the `X-Tenant-Id` / `X-Project-Id` headers. `InboundRegisterResult.VendorSecret` is for a vendor that generates the
+  signing secret itself (Fathom): control stores it as the ingress secret. `InboundStatusResult.Registered` is a `*bool`:
+  nil means the connector cannot tell (control must not read that as stale).
 - **`connectortest.InboundWebhookConformance`** and **`FakeControl`**: the suite every inbound connector must pass (no
   credential, wrong credential, empty secret, oversize, replay, unknown token, disabled ingress, control down).
 - **`BodyDigest`**, **`InboundUnregisterWebhookPath`**.
