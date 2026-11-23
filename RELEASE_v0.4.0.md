@@ -41,6 +41,10 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
   nil means the connector cannot tell (control must not read that as stale).
 - **`connectortest.InboundWebhookConformance`** and **`FakeControl`**: the suite every inbound connector must pass (no
   credential, wrong credential, empty secret, oversize, replay, unknown token, disabled ingress, control down).
+- **`ResolveConfigError`** and **`IsConnectionUnavailable(err)`**: a credential lookup that fails because the connection or its
+  credentials no longer exist (control answered 4xx other than 408/429, or the connection holds no credentials) is told apart from a
+  control outage or network failure. Unregister uses it: control treats a 404/410 from the connector as "nothing left to remove" and
+  keeps retrying anything else, so a revoked connection must answer `200 {"ok":true,"removed":false}`, not 502.
 - **`BodyDigest`**, **`InboundUnregisterWebhookPath`**.
 
 ### Removed (no compatibility shims)

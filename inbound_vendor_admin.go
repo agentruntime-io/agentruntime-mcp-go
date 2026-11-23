@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -69,6 +70,37 @@ type ResolveTestResponse struct {
 	Meta          map[string]any `json:"meta"`
 }
 
+// ResolveConfigError is a failed credential lookup through control's resolve-test.
+type ResolveConfigError struct {
+	// Status is control's HTTP status; zero when the answer was 2xx but held no configuration.
+	Status int
+	Body   string
+	// Empty means control answered but the connection holds no credentials.
+	Empty bool
+}
+
+func (e *ResolveConfigError) Error() string {
+	if e.Empty {
+		return "control resolve-test returned empty config_preview"
+	}
+	return fmt.Sprintf("control resolve-test: status %d: %s", e.Status, e.Body)
+}
+
+// IsConnectionUnavailable reports that the connection (or its credentials) no longer exists: control
+// answered with a client error other than 408 or 429, or the connection holds no credentials. A
+// control outage, a timeout or a network failure is not: those are worth retrying. Unregister uses
+// it to tell "nothing left to remove" (answer 200, removed false) from "try again later" (502).
+func IsConnectionUnavailable(err error) bool {
+	var re *ResolveConfigError
+	if !errors.As(err, &re) {
+		return false
+	}
+	if re.Empty {
+		return true
+	}
+	return re.Status >= 400 && re.Status < 500 && re.Status != http.StatusRequestTimeout && re.Status != http.StatusTooManyRequests
+}
+
 // ResolveMCPConnectionConfig resolves MCP connection credentials via Control resolve-test.
 func ResolveMCPConnectionConfig(ctx context.Context, env TriggerEnv, tenantID, projectID, connectionID, serverID, toolName string) (ResolveTestResponse, error) {
 	var out ResolveTestResponse
@@ -123,13 +155,13 @@ func ResolveMCPConnectionConfig(ctx context.Context, env TriggerEnv, tenantID, p
 		return out, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return out, fmt.Errorf("control resolve-test: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return out, &ResolveConfigError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
 	}
 	if len(out.ConfigPreview) == 0 {
-		return out, fmt.Errorf("control resolve-test returned empty config_preview")
+		return out, &ResolveConfigError{Empty: true}
 	}
 	return out, nil
 }
@@ -183,13 +215,13 @@ func ResolveMCPInstanceConfig(ctx context.Context, env TriggerEnv, tenantID, pro
 		return out, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return out, fmt.Errorf("control resolve-test: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return out, &ResolveConfigError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
 	}
 	if len(out.ConfigPreview) == 0 {
-		return out, fmt.Errorf("control resolve-test returned empty config_preview")
+		return out, &ResolveConfigError{Empty: true}
 	}
 	return out, nil
 }
