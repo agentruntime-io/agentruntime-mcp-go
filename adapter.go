@@ -14,18 +14,20 @@ type Adapter interface {
 }
 
 // WebhookAdapter may be implemented alongside Adapter by connectors that receive
-// vendor webhooks (GitHub, Slack, Stripe, etc.) and forward them as signed ingress
-// requests on the BFF (POST /v1/inbound-webhooks/{subscription_id}; formerly "Mode B" in docs).
+// vendor webhooks (GitHub, Telegram, Fathom, ...) and hand the verified events to
+// control-service as trigger events.
 //
 // RunWithRouter calls RegisterWebhook for every adapter that implements this interface,
 // passing the shared HTTP mux so the adapter can register its own plain-HTTP route
-// (e.g. mux.HandleFunc("/github/webhook", ...)) alongside the MCP route.
+// alongside the MCP route.
 //
 // Implementing this interface is entirely optional — adapters that only expose MCP
 // tools are not affected.
 //
-// Inside the registered handler, use SignModeB / DeliverModeB to forward the
-// verified vendor payload to the BFF as a canonical signed ingress delivery.
+// Do not write the route by hand: build an InboundWebhookSpec (Verify, EventType and EventKey
+// are the only vendor-specific parts) and call MountInboundWebhook. Pair it with TriggerAdapter
+// to declare the events, and with InboundVendorAdapter when the platform registers the vendor
+// webhook.
 type WebhookAdapter interface {
 	RegisterWebhook(mux *http.ServeMux)
 }

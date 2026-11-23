@@ -21,30 +21,37 @@ const (
 	inboundProjectHeader       = "X-Project-Id"
 )
 
-// InboundVendorAdapter may be implemented alongside Adapter by connectors that support
-// platform-managed vendor webhook registration (POST register / GET status on the connector router).
+// InboundVendorAdapter may be implemented alongside Adapter by connectors whose vendor webhook
+// the platform registers for the person: POST register-webhook, GET webhook-status and POST
+// unregister-webhook on the connector router. control-service calls these routes (the BFF no
+// longer does). Implement it with MountInboundVendorRoutes, which owns authentication, request
+// parsing and the response shapes; the connector supplies only the vendor calls.
 type InboundVendorAdapter interface {
 	RegisterInboundVendor(mux *http.ServeMux)
 }
 
-// InboundRegisterWebhookPath returns POST /{adapter}/inbound/register-webhook/{routeToken}.
-func InboundRegisterWebhookPath(adapter, routeToken string) string {
-	adapter = strings.Trim(strings.ToLower(strings.TrimSpace(adapter)), "/")
+func inboundRoutePath(adapter, action, routeToken string) string {
+	adapter = normalizeAdapterSlug(adapter)
 	token := strings.Trim(strings.TrimSpace(routeToken), "/")
 	if adapter == "" || token == "" {
 		return ""
 	}
-	return fmt.Sprintf("/%s/inbound/register-webhook/%s", adapter, token)
+	return fmt.Sprintf("/%s/inbound/%s/%s", adapter, action, token)
+}
+
+// InboundRegisterWebhookPath returns POST /{adapter}/inbound/register-webhook/{routeToken}.
+func InboundRegisterWebhookPath(adapter, routeToken string) string {
+	return inboundRoutePath(adapter, "register-webhook", routeToken)
 }
 
 // InboundWebhookStatusPath returns GET /{adapter}/inbound/webhook-status/{routeToken}.
 func InboundWebhookStatusPath(adapter, routeToken string) string {
-	adapter = strings.Trim(strings.ToLower(strings.TrimSpace(adapter)), "/")
-	token := strings.Trim(strings.TrimSpace(routeToken), "/")
-	if adapter == "" || token == "" {
-		return ""
-	}
-	return fmt.Sprintf("/%s/inbound/webhook-status/%s", adapter, token)
+	return inboundRoutePath(adapter, "webhook-status", routeToken)
+}
+
+// InboundUnregisterWebhookPath returns POST /{adapter}/inbound/unregister-webhook/{routeToken}.
+func InboundUnregisterWebhookPath(adapter, routeToken string) string {
+	return inboundRoutePath(adapter, "unregister-webhook", routeToken)
 }
 
 // InboundVendorMountPrefix returns /{adapter}/inbound/ for mux registration.
@@ -63,7 +70,7 @@ type ResolveTestResponse struct {
 }
 
 // ResolveMCPConnectionConfig resolves MCP connection credentials via Control resolve-test.
-func ResolveMCPConnectionConfig(ctx context.Context, env InboundAdapterRouteEnv, tenantID, projectID, connectionID, serverID, toolName string) (ResolveTestResponse, error) {
+func ResolveMCPConnectionConfig(ctx context.Context, env TriggerEnv, tenantID, projectID, connectionID, serverID, toolName string) (ResolveTestResponse, error) {
 	var out ResolveTestResponse
 	tenantID = strings.TrimSpace(tenantID)
 	connectionID = strings.TrimSpace(connectionID)
@@ -128,7 +135,7 @@ func ResolveMCPConnectionConfig(ctx context.Context, env InboundAdapterRouteEnv,
 }
 
 // ResolveMCPInstanceConfig resolves MCP instance credentials via Control resolve-test.
-func ResolveMCPInstanceConfig(ctx context.Context, env InboundAdapterRouteEnv, tenantID, projectID, instanceID, toolName string) (ResolveTestResponse, error) {
+func ResolveMCPInstanceConfig(ctx context.Context, env TriggerEnv, tenantID, projectID, instanceID, toolName string) (ResolveTestResponse, error) {
 	var out ResolveTestResponse
 	tenantID = strings.TrimSpace(tenantID)
 	instanceID = strings.TrimSpace(instanceID)
@@ -197,13 +204,13 @@ func InboundRouteToken(path, mountPrefix, action string) string {
 	return strings.Trim(strings.TrimPrefix(path, prefix), "/")
 }
 
-// WriteInboundVendorJSON writes a JSON response for inbound vendor admin routes.
+// InboundVendorContext carries the tenant scope control sends with an admin call.
 type InboundVendorContext struct {
 	TenantID  string
 	ProjectID string
 }
 
-// InboundVendorContextFromRequest reads tenant/project headers set by the BFF proxy.
+// InboundVendorContextFromRequest reads the X-Tenant-Id / X-Project-Id headers control sets.
 func InboundVendorContextFromRequest(r *http.Request) InboundVendorContext {
 	return InboundVendorContext{
 		TenantID:  strings.TrimSpace(r.Header.Get(inboundTenantHeader)),
@@ -212,19 +219,19 @@ func InboundVendorContextFromRequest(r *http.Request) InboundVendorContext {
 }
 
 // ValidateInboundInternalToken ensures the caller presents the fleet internal token.
-func ValidateInboundInternalToken(r *http.Request, env InboundAdapterRouteEnv) error {
+func ValidateInboundInternalToken(r *http.Request, env TriggerEnv) error {
 	expected := strings.TrimSpace(env.InternalToken)
 	if expected == "" {
 		return fmt.Errorf("MCP_CONTROL_INTERNAL_TOKEN not configured")
 	}
 	got := strings.TrimSpace(r.Header.Get(inboundInternalTokenHeader))
-	if got == "" || got != expected {
+	if got == "" || !ConstantTimeEqual(got, expected) {
 		return fmt.Errorf("unauthorized")
 	}
 	return nil
 }
 
-// InboundVendorContext carries tenant scope from BFF proxy headers.
+// WriteInboundVendorJSON writes a JSON response for inbound vendor admin routes.
 func WriteInboundVendorJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
