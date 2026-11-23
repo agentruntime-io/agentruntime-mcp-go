@@ -18,7 +18,8 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
   `TriggerVerify`, `TriggerRegistration`, `TriggerConnection`, `TriggerChannel`): JSON exactly as contract 8.2.
   `Validate(adapter)` applies the control-side rules (known version, unique event ids, filter ops `eq|in|prefix|contains`,
   exact `delivery.path` and `registration.*_path`, valid `scope_schema`, `x-from-events` only on arrays, 64 KB cap);
-  `Normalized()` turns null lists into `[]`.
+  `Normalized()` turns null lists into `[]`. The optional top-level `regional: true` (contract amendment) makes control list
+  the source only for workspaces that already have a usable connection to it.
 - **`ServeInboundWebhook(InboundWebhookSpec)`** / **`MountInboundWebhook`**: the whole vendor webhook route. It owns the
   route token (`POST /internal/trigger-ingress/resolve`), the body cap (413), a constant-time compare helper
   (`ConstantTimeEqual`), **refusal of an empty vendor secret (401, before `Verify` runs)**, the idempotency key, the post to

@@ -60,6 +60,10 @@ type TriggerManifest struct {
 	ScopeSchema  map[string]any         `json:"scope_schema"`
 	Connection   TriggerConnection      `json:"connection"`
 	Channel      *TriggerChannel        `json:"channel"`
+	// Regional marks a source that only some workspaces use (payments-lk is Sri Lanka only):
+	// control lists it only for a workspace that already has a usable connection to it, never
+	// under "unconnected".
+	Regional bool `json:"regional,omitempty"`
 }
 
 // TriggerManifestEvent is one event a person can pick.

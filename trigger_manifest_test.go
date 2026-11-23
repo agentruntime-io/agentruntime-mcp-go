@@ -170,3 +170,19 @@ func TestTriggerManifestNormalized_emptyListsNotNull(t *testing.T) {
 		}
 	}
 }
+
+func TestTriggerManifestRegional_optionalAndOmittedWhenFalse(t *testing.T) {
+	raw, _ := json.Marshal(validTestManifest().Normalized())
+	if strings.Contains(string(raw), `"regional"`) {
+		t.Fatalf("regional must be absent unless true: %s", raw)
+	}
+	m := validTestManifest()
+	m.Regional = true
+	if err := m.Validate("telegram"); err != nil {
+		t.Fatalf("a regional manifest is valid: %v", err)
+	}
+	raw, _ = json.Marshal(m.Normalized())
+	if !strings.Contains(string(raw), `"regional":true`) {
+		t.Fatalf("regional:true missing: %s", raw)
+	}
+}
