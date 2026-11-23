@@ -131,8 +131,13 @@ type InboundWebhookConformance struct {
 	Adapter string
 	// Handler serves the connector's webhook routes, typically a mux after RegisterWebhook.
 	Handler http.Handler
-	// VendorSecret is the ingress secret the fake control reports for the route.
+	// VendorSecret is the secret a valid delivery is signed with: the ingress vendor secret the
+	// fake control reports, unless IngressVendorSecret says the connector must not use that one.
 	VendorSecret string
+	// IngressVendorSecret is what the fake control reports as the ingress vendor secret when it
+	// differs from VendorSecret: a connector that verifies with a credential held on the connection
+	// (payments-lk's merchant key) must ignore it. Empty means VendorSecret.
+	IngressVendorSecret string
 	// Body is a valid vendor delivery body (a JSON object).
 	Body        []byte
 	ContentType string
@@ -205,7 +210,11 @@ func (c InboundWebhookConformance) Run(t *testing.T) {
 		if c.ControlRoutes != nil {
 			extra = c.ControlRoutes(emptySecret)
 		}
-		fc := NewFakeControl(t, c.ingress(secret), extra)
+		ingressSecret := secret
+		if secret != "" && c.IngressVendorSecret != "" {
+			ingressSecret = c.IngressVendorSecret
+		}
+		fc := NewFakeControl(t, c.ingress(ingressSecret), extra)
 		t.Setenv("MCP_CONTROL_SERVER_URL", fc.Server.URL)
 		t.Setenv("MCP_CONTROL_INTERNAL_TOKEN", ConformanceInternalToken)
 		return fc

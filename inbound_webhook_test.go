@@ -86,10 +86,11 @@ func TestServeInboundWebhook_secretHookOverridesVendorSecret(t *testing.T) {
 		return "merchant-key", nil
 	}
 	connectortest.InboundWebhookConformance{
-		Adapter:      "acme",
-		Handler:      testMux(spec),
-		VendorSecret: "merchant-key",
-		Body:         []byte(`{"id":7}`),
+		Adapter:             "acme",
+		Handler:             testMux(spec),
+		VendorSecret:        "merchant-key",
+		IngressVendorSecret: "placeholder-the-connector-must-ignore",
+		Body:                []byte(`{"id":7}`),
 		Prepare: func(r *http.Request, body []byte) {
 			r.Header.Set("X-Event", "thing.created")
 			r.Header.Set("X-Delivery", "d-1")
