@@ -33,6 +33,9 @@ func newAdminMux(t *testing.T, calls *adminCalls) *http.ServeMux {
 			if req.Scope["vendor_down"] == true {
 				return InboundRegisterResult{}, errors.New("vendor said 500")
 			}
+			if req.Scope["echo_secret"] == true {
+				return InboundRegisterResult{}, errors.New("vendor rejected secret " + req.VendorSecret + " for the hook")
+			}
 			res := InboundRegisterResult{
 				WebhookURL:      req.WebhookURL,
 				RegisteredScope: req.Scope,
@@ -336,5 +339,20 @@ func TestInboundVendorTenantFromBodyWhenNoHeader(t *testing.T) {
 	rec, _ := serve(mux, adminReq("POST", "/acme/inbound/register-webhook/tok-1", body, adminToken, nil))
 	if rec.Code != 200 || calls.register[0].Tenant.TenantID != "tenant-body" {
 		t.Fatalf("%d %+v", rec.Code, calls.register)
+	}
+}
+
+func TestInboundVendorRegister_errorsNeverEchoTheVendorSecret(t *testing.T) {
+	var calls adminCalls
+	mux := newAdminMux(t, &calls)
+	body := validRegisterBody()
+	body["scope"] = map[string]any{"echo_secret": true}
+	body["vendor_secret"] = "super-secret-value"
+	rec, out := serve(mux, adminReq("POST", "/acme/inbound/register-webhook/tok-1", body, adminToken, tenantHeaders))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("%d %v", rec.Code, out)
+	}
+	if strings.Contains(rec.Body.String(), "super-secret-value") {
+		t.Fatalf("the secret control sent came back in the error: %s", rec.Body.String())
 	}
 }

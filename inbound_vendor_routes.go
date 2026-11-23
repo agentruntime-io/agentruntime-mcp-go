@@ -193,7 +193,7 @@ func inboundVendorHandler(spec InboundVendorSpec, action, method string) http.Ha
 			}
 			res, err := spec.Register(ctx, env, req)
 			if err != nil {
-				writeInboundVendorFailure(w, err)
+				writeInboundVendorFailure(w, err, req.VendorSecret)
 				return
 			}
 			out := map[string]any{
@@ -213,7 +213,7 @@ func inboundVendorHandler(spec InboundVendorSpec, action, method string) http.Ha
 			}
 			res, err := spec.Status(ctx, env, req)
 			if err != nil {
-				writeInboundVendorFailure(w, err)
+				writeInboundVendorFailure(w, err, req.VendorSecret)
 				return
 			}
 			out := map[string]any{
@@ -238,7 +238,7 @@ func inboundVendorHandler(spec InboundVendorSpec, action, method string) http.Ha
 			}
 			res, err := spec.Unregister(ctx, env, req)
 			if err != nil {
-				writeInboundVendorFailure(w, err)
+				writeInboundVendorFailure(w, err, req.VendorSecret)
 				return
 			}
 			WriteInboundVendorJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": res.Removed})
@@ -304,13 +304,23 @@ func checkInboundWebhookURL(adapter, token, raw string) error {
 	return nil
 }
 
-func writeInboundVendorFailure(w http.ResponseWriter, err error) {
+// writeInboundVendorFailure answers a failed vendor call. The text goes back to control, which
+// may store and show it, so the vendor secret control sent is removed from it first.
+func writeInboundVendorFailure(w http.ResponseWriter, err error, secrets ...string) {
+	redact := func(msg string) string {
+		for _, s := range secrets {
+			if len(s) >= 8 {
+				msg = strings.ReplaceAll(msg, s, "<redacted>")
+			}
+		}
+		return msg
+	}
 	var ve *InboundVendorError
 	if errors.As(err, &ve) {
-		WriteInboundVendorError(w, ve.Status, ve.Message)
+		WriteInboundVendorError(w, ve.Status, redact(ve.Message))
 		return
 	}
-	WriteInboundVendorError(w, http.StatusBadGateway, err.Error())
+	WriteInboundVendorError(w, http.StatusBadGateway, redact(err.Error()))
 }
 
 func nonNilMap(m map[string]any) map[string]any {
