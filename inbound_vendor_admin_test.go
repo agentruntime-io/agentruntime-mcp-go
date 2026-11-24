@@ -356,3 +356,29 @@ func TestInboundVendorRegister_errorsNeverEchoTheVendorSecret(t *testing.T) {
 		t.Fatalf("the secret control sent came back in the error: %s", rec.Body.String())
 	}
 }
+
+func TestInboundVendorRegister_webhookURLMustBeHTTPSOutsideLoopback(t *testing.T) {
+	mk := func(url string) int {
+		var calls adminCalls
+		mux := newAdminMux(t, &calls)
+		body := validRegisterBody()
+		body["webhook_url"] = url
+		rec, _ := serve(mux, adminReq("POST", "/acme/inbound/register-webhook/tok-1", body, adminToken, tenantHeaders))
+		return rec.Code
+	}
+	for _, u := range []string{"http://router.example.com/acme/webhook/tok-1", "http://10.0.0.5/acme/webhook/tok-1"} {
+		if code := mk(u); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400 (a vendor webhook URL must be https)", u, code)
+		}
+	}
+	for _, u := range []string{
+		"https://router.example.com/acme/webhook/tok-1",
+		"http://127.0.0.1:8021/acme/webhook/tok-1",
+		"http://localhost:8021/acme/webhook/tok-1",
+		"http://[::1]:8021/acme/webhook/tok-1",
+	} {
+		if code := mk(u); code != http.StatusOK {
+			t.Errorf("%s: status %d, want 200", u, code)
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -294,6 +295,9 @@ func checkInboundWebhookURL(adapter, token, raw string) error {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return errors.New("webhook_url must be an http(s) URL")
 	}
+	if u.Scheme == "http" && !isLoopbackHost(u.Hostname()) {
+		return errors.New("webhook_url must be https (plain http is allowed only for localhost development)")
+	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("webhook_url must not carry credentials, a query or a fragment")
 	}
@@ -341,3 +345,12 @@ func firstNonEmpty(values ...string) string {
 
 // BoolPtr returns a pointer to b, for InboundStatusResult.Registered.
 func BoolPtr(b bool) *bool { return &b }
+
+// isLoopbackHost: plain http is for local development of the router only.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}

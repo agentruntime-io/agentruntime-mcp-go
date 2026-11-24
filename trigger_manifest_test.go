@@ -186,3 +186,22 @@ func TestTriggerManifestRegional_optionalAndOmittedWhenFalse(t *testing.T) {
 		t.Fatalf("regional:true missing: %s", raw)
 	}
 }
+
+func TestTriggerManifestValidate_manyPerConnectionNeedsAFilterNamedAfterTheUnit(t *testing.T) {
+	m := validTestManifest()
+	m.Registration.Limit = TriggerLimitManyPerConnection
+	m.Registration.Unit = "repo"
+	err := m.Validate("telegram")
+	if err == nil || !strings.Contains(err.Error(), `filter field "repo"`) {
+		t.Fatalf("an event with no filter field named after the registration unit cannot be narrowed to a trigger's own scope, got %v", err)
+	}
+	m.Events[0].FilterFields = append(m.Events[0].FilterFields,
+		TriggerFilterField{ID: "repo", Label: "Only this repository", Type: "string", Path: "repository.full_name", Op: "eq"})
+	if err := m.Validate("telegram"); err != nil {
+		t.Fatalf("a filter field named after the unit satisfies the rule: %v", err)
+	}
+	m.Events[0].FilterFields[len(m.Events[0].FilterFields)-1].Op = "contains"
+	if err := m.Validate("telegram"); err == nil || !strings.Contains(err.Error(), "eq") {
+		t.Fatalf("the unit filter must compare with eq (the engine matches the trigger's scope exactly), got %v", err)
+	}
+}

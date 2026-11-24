@@ -290,8 +290,27 @@ func (m TriggerManifest) validateRegistration(adapter string) error {
 	switch r.Limit {
 	case TriggerLimitOnePerConnection:
 	case TriggerLimitManyPerConnection:
-		if strings.TrimSpace(r.Unit) == "" {
+		unit := strings.TrimSpace(r.Unit)
+		if unit == "" {
 			return fmt.Errorf("trigger manifest: registration.unit required when limit is many_per_connection")
+		}
+		// Every unit (a repository) of a connection shares one route, so control narrows each event to a
+		// trigger's own scope[unit] with the event's filter field of the same id. An event without it
+		// cannot be narrowed and would reach every trigger of the connection.
+		for _, ev := range m.Events {
+			var found bool
+			for _, f := range ev.FilterFields {
+				if f.ID != unit {
+					continue
+				}
+				found = true
+				if f.Op != "eq" {
+					return fmt.Errorf("trigger manifest: event %q filter field %q must use op eq (control matches the trigger's %s exactly)", ev.ID, unit, unit)
+				}
+			}
+			if !found {
+				return fmt.Errorf("trigger manifest: event %q needs a filter field %q (registration.unit) so a trigger's own %s can narrow it", ev.ID, unit, unit)
+			}
 		}
 	default:
 		return fmt.Errorf("trigger manifest: registration.limit %q is not one of one_per_connection, many_per_connection", r.Limit)
