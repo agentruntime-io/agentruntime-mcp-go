@@ -226,6 +226,12 @@ func TestTriggerManifestValidate_scopeSchemaStaysInsideControlsSubset(t *testing
 		{"required with a non-name", map[string]any{"type": "object", "required": []any{1}}, "required"},
 		{"enum not a list", map[string]any{"type": "string", "enum": "a"}, "enum"},
 		{"additionalProperties not a boolean", map[string]any{"type": "object", "additionalProperties": map[string]any{}}, "additionalProperties"},
+		{"pattern not a string", map[string]any{"type": "string", "pattern": 7}, "pattern"},
+		{"pattern that does not compile", map[string]any{"type": "string", "pattern": "([a-z"}, "pattern"},
+		{"pattern with a construct RE2 lacks", map[string]any{"type": "string", "pattern": "(?=x)y"}, "pattern"},
+		{"pattern over 512 characters", map[string]any{"type": "string", "pattern": strings.Repeat("a", 513)}, "pattern"},
+		{"nested pattern that does not compile", map[string]any{"type": "object", "properties": map[string]any{
+			"repo": map[string]any{"type": "string", "pattern": "["}}}, "pattern"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,7 +244,7 @@ func TestTriggerManifestValidate_scopeSchemaStaysInsideControlsSubset(t *testing
 		})
 	}
 	ok := map[string]any{"type": "object", "required": []any{"repo"}, "additionalProperties": false, "properties": map[string]any{
-		"repo":   map[string]any{"type": "string", "title": "Repository", "minLength": 3},
+		"repo":   map[string]any{"type": "string", "title": "Repository", "minLength": 3, "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
 		"events": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []any{"push"}}, "x-from-events": true},
 		"limit":  map[string]any{"type": "integer", "minimum": 1, "default": 5},
 	}}

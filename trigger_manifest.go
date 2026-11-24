@@ -3,6 +3,7 @@ package agentruntimemcp
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -368,9 +369,14 @@ func validateScopeSchema(schema map[string]any) error {
 
 // control's scope_schema validator accepts a small subset of JSON Schema: type is ONE of these names;
 // properties and items are schema objects; required is a list of names; enum a list; additionalProperties
-// a boolean. Other keywords (title, description, default, x-*, minLength, ...) pass through as annotations.
+// a boolean, pattern an RE2 string of at most 512 characters. Other keywords (title, description, default,
+// x-*, minLength, ...) pass through as annotations.
 // A manifest outside the subset is refused by control at discovery, so no trigger of that source could
 // ever be created; the SDK refuses it first, and tests catch it in the connector.
+// maxSchemaPatternLen is control's limit for a scope_schema "pattern" (an RE2 expression, checked on strings
+// and on list items).
+const maxSchemaPatternLen = 512
+
 var controlSchemaTypes = map[string]struct{}{
 	"object": {}, "array": {}, "string": {}, "integer": {}, "number": {}, "boolean": {},
 }
@@ -428,6 +434,18 @@ func checkControlSchemaSubset(node map[string]any, path string) error {
 	if ap, ok := node["additionalProperties"]; ok {
 		if _, ok := ap.(bool); !ok {
 			return bad(".additionalProperties must be a boolean")
+		}
+	}
+	if pat, ok := node["pattern"]; ok {
+		str, ok := pat.(string)
+		if !ok {
+			return bad(".pattern must be a string")
+		}
+		if len(str) > maxSchemaPatternLen {
+			return bad(".pattern is %d characters; control accepts at most %d", len(str), maxSchemaPatternLen)
+		}
+		if _, err := regexp.Compile(str); err != nil { // Go's regexp is RE2, the flavour control uses
+			return bad(".pattern does not compile: %v", err)
 		}
 	}
 	return nil
