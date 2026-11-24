@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -198,8 +199,11 @@ func ServeInboundWebhook(spec InboundWebhookSpec) http.HandlerFunc {
 // triggerPostFailure decides what the vendor is told when control did not accept an event. The vendor
 // retries on 5xx, so everything that could clear up (control refusing this router, overloaded, slow,
 // down) is a 502: a 4xx would be a permanent refusal and, for GitHub, the delivery would be lost.
-// Only a missing route (404), an ingress switched off meanwhile (403 with ingress_disabled) and an event
-// control calls invalid (other 4xx) are permanent.
+//
+// control's codes (contract 16.9): 403 "forbidden" is its own refusal of a disabled or paused ingress
+// and is permanent (404 to the vendor); 403 "service_not_allowed" and 401 mean the router is not
+// accepted (wrong token or service name) and are wiring faults to retry and fix; 404 is an unknown
+// route; 413 and other 4xx are permanent. An unrecognised 403 is treated as a wiring fault.
 func triggerPostFailure(err error) (int, string) {
 	var pe *TriggerPostError
 	if !errors.As(err, &pe) {
@@ -208,8 +212,10 @@ func triggerPostFailure(err error) (int, string) {
 	switch {
 	case pe.Status == http.StatusNotFound:
 		return http.StatusNotFound, "unknown webhook route"
-	case pe.Status == http.StatusForbidden && strings.Contains(pe.Body, "ingress_disabled"):
+	case pe.Status == http.StatusForbidden && controlErrorCode(pe.Body) == "forbidden":
 		return http.StatusNotFound, "unknown webhook route"
+	case pe.Status == http.StatusRequestEntityTooLarge:
+		return http.StatusRequestEntityTooLarge, "payload too large"
 	case pe.Status == http.StatusUnauthorized, pe.Status == http.StatusForbidden, pe.Status == http.StatusRequestTimeout,
 		pe.Status == http.StatusTooEarly, pe.Status == http.StatusTooManyRequests, pe.Status >= 500:
 		return http.StatusBadGateway, "forward failed"
@@ -217,6 +223,17 @@ func triggerPostFailure(err error) (int, string) {
 		return http.StatusBadRequest, "event refused"
 	}
 	return http.StatusBadGateway, "forward failed"
+}
+
+// controlErrorCode reads the "error" code of control's error envelope ({"error":"forbidden",...}).
+func controlErrorCode(body string) string {
+	var env struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &env) != nil {
+		return ""
+	}
+	return env.Error
 }
 
 // BodyDigest is the first 32 hex characters of sha256(body): stable for a re-send of the same

@@ -51,14 +51,15 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
 
 - **Control refusing the router is retryable and logged.** `ResolveTriggerIngress` treats only 404 as an unknown route;
   401, 403, 429 and 5xx are errors (the vendor gets 503 and the router logs why) instead of a silent 404. For the event
-  post, 401, 403, 408, 425, 429 and 5xx answer 502 (the vendor retries), 404 and `403 {"error":"ingress_disabled"}` answer
-  404, other 4xx answer 400. Every refusal is logged with the connection id, never the route token.
+  post, 401, 403 `service_not_allowed` (a wrong service name or token: a wiring fault), 408, 425, 429 and 5xx answer 502 (the
+  vendor retries); 404 and control's own refusal of a disabled or paused ingress (`403 {"error":"forbidden"}`) answer 404; 413
+  answers 413; other 4xx answer 400. An unrecognised 403 is treated as a wiring fault (retried). Every refusal is logged with the connection id, never the route token.
 - **Manifest rule for `registration.unit`.** `Validate` now requires, for `many_per_connection`, a filter field with the
   id of `registration.unit` and op `eq` on every event. Control uses it to match a trigger's own `scope[unit]` (GitHub's
   repository) so triggers on one connection do not receive each other's events.
 - **Webhook URLs are https.** `register-webhook` and `unregister-webhook` refuse an `http` `webhook_url` unless the host
   is localhost, 127.0.0.1 or ::1 (local development).
-- **Conformance suite additions:** control 401/403 on lookup, 401/403/408/425/429 on post, `ingress_disabled`, 400/422,
+- **Conformance suite additions:** control 401/403 on lookup, 401/403/408/425/429 on post, `service_not_allowed` and `forbidden` 403 bodies, 413, 400/422,
   a chunked oversize body, a body that is not JSON, an optional stale-timestamp credential (`SignStale`); the fake
   ingress reports a catalog UUID as server id like production. New `FakeControl.ResolveStatus`, `PostStatus`, `PostBody`.
 

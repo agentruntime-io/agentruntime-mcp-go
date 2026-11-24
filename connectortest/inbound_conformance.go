@@ -40,7 +40,7 @@ type FakeControl struct {
 	// body (401 and 403: control refuses the router; 429: control is overloaded).
 	ResolveStatus int
 	PostStatus    int
-	// PostBody is the error body sent with PostStatus (for example {"error":"ingress_disabled"}).
+	// PostBody is the error body sent with PostStatus (for example {"error":"service_not_allowed"}).
 	PostBody string
 }
 
@@ -414,10 +414,25 @@ func (c InboundWebhookConformance) Run(t *testing.T) {
 	})
 
 	t.Run("control saying the ingress was switched off meanwhile is a 404", func(t *testing.T) {
+		// control's own refusal for a disabled or paused ingress: 403 with error "forbidden"
 		fc := newControl(t, c.VendorSecret, false)
 		fc.PostStatus = http.StatusForbidden
-		fc.PostBody = `{"error":"ingress_disabled"}`
+		fc.PostBody = `{"error":"forbidden","message":"disabled or paused"}`
 		wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, valid(c.VendorSecret))), http.StatusNotFound)
+	})
+
+	t.Run("control not accepting this router is retryable, not a disabled ingress", func(t *testing.T) {
+		// a wrong X-Service-Name is a wiring fault: 403 with error "service_not_allowed"
+		fc := newControl(t, c.VendorSecret, false)
+		fc.PostStatus = http.StatusForbidden
+		fc.PostBody = `{"error":"service_not_allowed","message":"service name not accepted"}`
+		wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, valid(c.VendorSecret))), http.StatusBadGateway)
+	})
+
+	t.Run("control saying the event is too large is permanent", func(t *testing.T) {
+		fc := newControl(t, c.VendorSecret, false)
+		fc.PostStatus = http.StatusRequestEntityTooLarge
+		wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, valid(c.VendorSecret))), http.StatusRequestEntityTooLarge)
 	})
 
 	t.Run("control rejecting the event as invalid is permanent", func(t *testing.T) {
