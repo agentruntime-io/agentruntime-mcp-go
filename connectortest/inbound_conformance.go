@@ -36,6 +36,12 @@ type FakeControl struct {
 	// FailResolve and FailPost make the next call of that kind answer 500.
 	FailResolve bool
 	FailPost    bool
+	// ResolveStatus and PostStatus, when non-zero, make that call answer this status with an error
+	// body (401 and 403: control refuses the router; 429: control is overloaded).
+	ResolveStatus int
+	PostStatus    int
+	// PostBody is the error body sent with PostStatus (for example {"error":"ingress_disabled"}).
+	PostBody string
 }
 
 // NewFakeControl starts a fake control server. The ingress for ConformanceRouteToken uses
@@ -68,10 +74,16 @@ func (fc *FakeControl) resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	fc.mu.Lock()
 	fail := fc.FailResolve
+	status := fc.ResolveStatus
 	ingress := fc.ingress
 	fc.mu.Unlock()
 	if fail {
 		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if status != 0 {
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"error":"forbidden"}`))
 		return
 	}
 	var req struct {
@@ -95,6 +107,15 @@ func (fc *FakeControl) post(w http.ResponseWriter, r *http.Request) {
 	defer fc.mu.Unlock()
 	if fc.FailPost {
 		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	if fc.PostStatus != 0 {
+		w.WriteHeader(fc.PostStatus)
+		body := fc.PostBody
+		if body == "" {
+			body = `{"error":"refused"}`
+		}
+		_, _ = w.Write([]byte(body))
 		return
 	}
 	var ev map[string]any
@@ -155,6 +176,9 @@ type InboundWebhookConformance struct {
 	// asks for the connector's own secret source to be empty (payments-lk reads the merchant
 	// key from the connection config).
 	ControlRoutes func(emptySecret bool) map[string]http.HandlerFunc
+	// SignStale, when set, adds a credential that is correct except that its timestamp is outside
+	// the vendor's tolerance (Fathom, payments-lk): it must be refused like a wrong credential.
+	SignStale func(r *http.Request, body []byte, secret string)
 	// Ingress fields reported next to the vendor secret.
 	TenantID, ProjectID, ServerID, ConnectionID string
 }
@@ -172,7 +196,8 @@ func (c InboundWebhookConformance) ingress(secret string) map[string]any {
 		"enabled":       true,
 		"tenant_id":     str(c.TenantID, "tenant-1"),
 		"project_id":    str(c.ProjectID, "project-1"),
-		"server_id":     str(c.ServerID, c.Adapter),
+		// control stores the catalog row id (a UUID) as the ingress server id, not the adapter name
+		"server_id": str(c.ServerID, "6b1f4c52-8f3e-4a52-9d0a-0d4b1b7a2c11"),
 	}
 }
 
@@ -330,6 +355,77 @@ func (c InboundWebhookConformance) Run(t *testing.T) {
 		newControl(t, c.VendorSecret, false)
 		r := httptest.NewRequest(http.MethodGet, "/"+c.Adapter+"/webhook/"+ConformanceRouteToken, nil)
 		wantStatus(t, do(r), http.StatusMethodNotAllowed)
+	})
+
+	t.Run("a credential with a stale timestamp is refused", func(t *testing.T) {
+		if c.SignStale == nil {
+			t.Skip("the vendor's scheme has no timestamp")
+		}
+		fc := newControl(t, c.VendorSecret, false)
+		wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, func(r *http.Request, body []byte) { c.SignStale(r, body, c.VendorSecret) })), http.StatusUnauthorized)
+		wantNoEvents(t, fc)
+	})
+
+	t.Run("oversize body without a content length is refused", func(t *testing.T) {
+		fc := newControl(t, c.VendorSecret, false)
+		big := []byte(`{"pad":"` + strings.Repeat("a", max) + `"}`)
+		r := c.request(ConformanceRouteToken, big, valid(c.VendorSecret))
+		r.ContentLength = -1 // chunked: the cap cannot rely on the header
+		r.Body = io.NopCloser(bytes.NewReader(big))
+		wantStatus(t, do(r), http.StatusRequestEntityTooLarge)
+		wantNoEvents(t, fc)
+	})
+
+	t.Run("a body that is not JSON is never posted as an object", func(t *testing.T) {
+		fc := newControl(t, c.VendorSecret, false)
+		raw := []byte("event=ping&data=not-json")
+		rec := do(c.request(ConformanceRouteToken, raw, valid(c.VendorSecret)))
+		events := fc.Events()
+		switch {
+		case rec.Code == http.StatusBadRequest && len(events) == 0:
+			// refused: the connector cannot name an event for it
+		case rec.Code == http.StatusOK && len(events) == 1:
+			if _, asObject := events[0]["payload"]; asObject {
+				t.Fatalf("a non-JSON body must not become a payload object: %v", events[0])
+			}
+			if events[0]["payload_raw"] != string(raw) {
+				t.Fatalf("payload_raw = %v, want the body verbatim", events[0]["payload_raw"])
+			}
+		default:
+			t.Fatalf("status %d with %d events: want 400 and nothing posted, or 200 and one payload_raw event", rec.Code, len(events))
+		}
+	})
+
+	t.Run("control refusing the router on lookup is retryable, never a silent 404", func(t *testing.T) {
+		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+			fc := newControl(t, c.VendorSecret, false)
+			fc.ResolveStatus = status
+			wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, valid(c.VendorSecret))), http.StatusServiceUnavailable)
+			wantNoEvents(t, fc)
+		}
+	})
+
+	t.Run("control refusing or throttling the event is retryable", func(t *testing.T) {
+		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusRequestTimeout, http.StatusTooEarly, http.StatusTooManyRequests} {
+			fc := newControl(t, c.VendorSecret, false)
+			fc.PostStatus = status
+			wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, valid(c.VendorSecret))), http.StatusBadGateway)
+		}
+	})
+
+	t.Run("control saying the ingress was switched off meanwhile is a 404", func(t *testing.T) {
+		fc := newControl(t, c.VendorSecret, false)
+		fc.PostStatus = http.StatusForbidden
+		fc.PostBody = `{"error":"ingress_disabled"}`
+		wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, valid(c.VendorSecret))), http.StatusNotFound)
+	})
+
+	t.Run("control rejecting the event as invalid is permanent", func(t *testing.T) {
+		for _, status := range []int{http.StatusBadRequest, http.StatusUnprocessableEntity} {
+			fc := newControl(t, c.VendorSecret, false)
+			fc.PostStatus = status
+			wantStatus(t, do(c.request(ConformanceRouteToken, c.Body, valid(c.VendorSecret))), http.StatusBadRequest)
+		}
 	})
 
 	t.Run("control down on lookup makes the vendor retry", func(t *testing.T) {

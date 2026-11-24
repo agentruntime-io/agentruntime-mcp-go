@@ -128,6 +128,7 @@ func ServeInboundWebhook(spec InboundWebhookSpec) http.HandlerFunc {
 			return
 		}
 		if ingress == nil {
+			logWarn("%s webhook: route unknown to control, or its ingress is off", adapter)
 			http.Error(w, "unknown webhook route", http.StatusNotFound)
 			return
 		}
@@ -178,20 +179,13 @@ func ServeInboundWebhook(spec InboundWebhookSpec) http.HandlerFunc {
 
 		ev := NewTriggerEvent(token, eventType, eventKey, r.Header.Get("Content-Type"), body)
 		if _, err := PostTriggerEvent(ctx, env, ev); err != nil {
-			var pe *TriggerPostError
-			if errors.As(err, &pe) {
-				switch {
-				case pe.Status == http.StatusNotFound || pe.Status == http.StatusForbidden:
-					http.Error(w, "unknown webhook route", http.StatusNotFound)
-					return
-				case pe.Status >= 400 && pe.Status < 500:
-					logWarn("%s webhook: control refused the event: %v", adapter, err)
-					http.Error(w, "event refused", http.StatusBadRequest)
-					return
-				}
+			status, msg := triggerPostFailure(err)
+			if status >= 500 {
+				logError("%s webhook: handing the event to control failed (connection %s): %v", adapter, ingress.ConnectionID, err)
+			} else {
+				logWarn("%s webhook: control refused the event (connection %s): %v", adapter, ingress.ConnectionID, err)
 			}
-			logError("%s webhook: handing the event to control failed: %v", adapter, err)
-			http.Error(w, "forward failed", http.StatusBadGateway)
+			http.Error(w, msg, status)
 			return
 		}
 
@@ -199,6 +193,30 @@ func ServeInboundWebhook(spec InboundWebhookSpec) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}
+}
+
+// triggerPostFailure decides what the vendor is told when control did not accept an event. The vendor
+// retries on 5xx, so everything that could clear up (control refusing this router, overloaded, slow,
+// down) is a 502: a 4xx would be a permanent refusal and, for GitHub, the delivery would be lost.
+// Only a missing route (404), an ingress switched off meanwhile (403 with ingress_disabled) and an event
+// control calls invalid (other 4xx) are permanent.
+func triggerPostFailure(err error) (int, string) {
+	var pe *TriggerPostError
+	if !errors.As(err, &pe) {
+		return http.StatusBadGateway, "forward failed"
+	}
+	switch {
+	case pe.Status == http.StatusNotFound:
+		return http.StatusNotFound, "unknown webhook route"
+	case pe.Status == http.StatusForbidden && strings.Contains(pe.Body, "ingress_disabled"):
+		return http.StatusNotFound, "unknown webhook route"
+	case pe.Status == http.StatusUnauthorized, pe.Status == http.StatusForbidden, pe.Status == http.StatusRequestTimeout,
+		pe.Status == http.StatusTooEarly, pe.Status == http.StatusTooManyRequests, pe.Status >= 500:
+		return http.StatusBadGateway, "forward failed"
+	case pe.Status >= 400:
+		return http.StatusBadRequest, "event refused"
+	}
+	return http.StatusBadGateway, "forward failed"
 }
 
 // BodyDigest is the first 32 hex characters of sha256(body): stable for a re-send of the same

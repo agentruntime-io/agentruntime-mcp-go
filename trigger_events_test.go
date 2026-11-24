@@ -169,9 +169,8 @@ func TestResolveTriggerIngress(t *testing.T) {
 		status int
 		body   string
 	}{
-		"unknown":  {404, `{}`},
-		"disabled": {403, `{}`},
-		"flagged":  {200, `{"vendor_secret":"s","enabled":false}`},
+		"unknown": {404, `{}`},
+		"flagged": {200, `{"vendor_secret":"s","enabled":false}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := respond(resp.status, resp.body)
@@ -179,6 +178,16 @@ func TestResolveTriggerIngress(t *testing.T) {
 			ing, err := ResolveTriggerIngress(context.Background(), TriggerEnv{ControlURL: srv.URL, InternalToken: "i"}, "tok")
 			if err != nil || ing != nil {
 				t.Fatalf("a route that does not exist or is off is (nil, nil), got %v, %v", ing, err)
+			}
+		})
+	}
+	for name, status := range map[string]int{"router not accepted (401)": 401, "router refused (403)": 403, "overloaded (429)": 429} {
+		t.Run(name, func(t *testing.T) {
+			srv := respond(status, `{"error":"forbidden"}`)
+			defer srv.Close()
+			ing, err := ResolveTriggerIngress(context.Background(), TriggerEnv{ControlURL: srv.URL, InternalToken: "i"}, "tok")
+			if err == nil || ing != nil {
+				t.Fatalf("only 404 means an unknown route; %d is control refusing us and must be an error, got %v, %v", status, ing, err)
 			}
 		})
 	}

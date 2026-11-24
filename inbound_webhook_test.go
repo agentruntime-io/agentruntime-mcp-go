@@ -80,7 +80,7 @@ func TestServeInboundWebhook_secretHookOverridesVendorSecret(t *testing.T) {
 		return testVerify(r, body, secret)
 	}
 	spec.Secret = func(ctx context.Context, ing TriggerIngress) (string, error) {
-		if ing.TenantID != "tenant-1" || ing.ServerID != "acme" || ing.ConnectionID != "conn-1" {
+		if ing.TenantID != "tenant-1" || ing.ServerID == "" || ing.ConnectionID != "conn-1" {
 			return "", fmt.Errorf("ingress context missing: %+v", ing)
 		}
 		return "merchant-key", nil
@@ -183,5 +183,33 @@ func TestConnectorWebhookPath(t *testing.T) {
 	}
 	if ConnectorWebhookPath("", "tok") != "" || ConnectorWebhookPath("x", "") != "" {
 		t.Fatal("empty parts must give an empty path")
+	}
+}
+
+func TestServeInboundWebhook_nothingIsReadFromAnUnverifiedBody(t *testing.T) {
+	// the event type and key come from the delivery; a delivery that has not been verified must not be
+	// interpreted at all
+	fc := connectortest.NewFakeControl(t, map[string]any{"vendor_secret": "s", "connection_id": "c", "enabled": true}, nil)
+	t.Setenv("MCP_CONTROL_SERVER_URL", fc.Server.URL)
+	t.Setenv("MCP_CONTROL_INTERNAL_TOKEN", connectortest.ConformanceInternalToken)
+	var typeCalls, keyCalls atomic.Int32
+	spec := testSpec()
+	spec.EventType = func(r *http.Request, body []byte) string { typeCalls.Add(1); return "e" }
+	spec.EventKey = func(r *http.Request, body []byte) string { keyCalls.Add(1); return "acme-1" }
+	h := testMux(spec)
+	for name, sign := range map[string]func(r *http.Request){
+		"no credential":    func(r *http.Request) {},
+		"wrong credential": func(r *http.Request) { r.Header.Set(testSigHeader, testSign("other", []byte(`{}`))) },
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/acme/webhook/"+connectortest.ConformanceRouteToken, strings.NewReader(`{}`))
+		sign(r)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: status %d", name, rec.Code)
+		}
+	}
+	if typeCalls.Load() != 0 || keyCalls.Load() != 0 {
+		t.Fatalf("EventType called %d times and EventKey %d times for unverified deliveries", typeCalls.Load(), keyCalls.Load())
 	}
 }

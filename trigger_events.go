@@ -160,8 +160,8 @@ type TriggerIngress struct {
 }
 
 // ResolveTriggerIngress asks control which ingress a route token belongs to
-// (POST /internal/trigger-ingress/resolve). It returns (nil, nil) when the token is unknown
-// or the ingress is off, and an error when control cannot answer, so a vendor retries.
+// (POST /internal/trigger-ingress/resolve). It returns (nil, nil) when the token is unknown (404)
+// or the ingress is off, and an error for any other answer, so a vendor retries.
 func ResolveTriggerIngress(ctx context.Context, env TriggerEnv, routeToken string) (*TriggerIngress, error) {
 	routeToken = strings.TrimSpace(routeToken)
 	if routeToken == "" {
@@ -191,7 +191,10 @@ func ResolveTriggerIngress(ctx context.Context, env TriggerEnv, routeToken strin
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusForbidden {
+	// Only 404 means "no such route". 401 and 403 mean control does not accept this router (a wrong
+	// token or service name in one environment), and 429 or 5xx mean it is busy: all are errors, so the
+	// vendor retries and the router logs why, instead of every delivery turning into a silent 404.
+	if resp.StatusCode == http.StatusNotFound {
 		return nil, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
