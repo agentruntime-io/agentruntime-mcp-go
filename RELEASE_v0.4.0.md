@@ -41,10 +41,14 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
   nil means the connector cannot tell (control must not read that as stale).
 - **`connectortest.InboundWebhookConformance`** and **`FakeControl`**: the suite every inbound connector must pass (no
   credential, wrong credential, empty secret, oversize, replay, unknown token, disabled ingress, control down).
-- **`ResolveConfigError`** and **`IsConnectionUnavailable(err)`**: a credential lookup that fails because the connection or its
-  credentials no longer exist (control answered 4xx other than 408/429, or the connection holds no credentials) is told apart from a
-  control outage or network failure. Unregister uses it: control treats a 404/410 from the connector as "nothing left to remove" and
-  keeps retrying anything else, so a revoked connection must answer `200 {"ok":true,"removed":false}`, not 502.
+- **`ResolveConfigError`** and **`IsConnectionUnavailable(err)`**: a credential lookup that fails because the connection itself is
+  gone is told apart from every other failure. Gone means only: an empty config, `404 connection_not_found`, or `422` with
+  "missing required config field" (a deleted connection resolves to no value for a required field). A wrong internal token (401),
+  a service name control does not accept (403), a malformed call (400), a hidden tool or missing server (404 `not_found`), a
+  timeout, a rate limit, an outage and a network failure are **not** gone: unregister answers 502 and control keeps the ingress,
+  instead of `removed:false` making it drop the ingress with the vendor hooks still registered. Control currently answers a missing
+  connection with the 422; the distinct `connection_not_found` 404 is requested from the engine session.
+- **`RegisteredTriggerManifests()`**: the manifest of every registered adapter that declares one, for the router module's fixture test.
 - **`BodyDigest`**, **`InboundUnregisterWebhookPath`**.
 
 ### Review fixes (behaviour to know when upgrading)
@@ -54,6 +58,11 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
   post, 401, 403 `service_not_allowed` (a wrong service name or token: a wiring fault), 408, 425, 429 and 5xx answer 502 (the
   vendor retries); 404 and control's own refusal of a disabled or paused ingress (`403 {"error":"forbidden"}`) answer 404; 413
   answers 413; other 4xx answer 400. An unrecognised 403 is treated as a wiring fault (retried). Every refusal is logged with the connection id, never the route token.
+- **`scope_schema` stays inside control's JSON Schema subset.** Control's validator takes `type` as ONE of `object`, `array`,
+  `string`, `integer`, `number`, `boolean` (no type lists, no `null`), `properties` and `items` as schema objects, `required` as a
+  list of names, `enum` as a list, `additionalProperties` as a boolean; other keywords are annotations. `Validate` now refuses what
+  control refuses: a manifest control cannot store means no trigger of that source can ever be created (the GitHub manifest
+  declared `repo` as `["string","array"]` and was exactly that).
 - **Manifest rule for `registration.unit`.** `Validate` now requires, for `many_per_connection`, a filter field with the
   id of `registration.unit` and op `eq` on every event. Control uses it to match a trigger's own `scope[unit]` (GitHub's
   repository) so triggers on one connection do not receive each other's events.
