@@ -57,7 +57,10 @@ right `event_type`, `event_key` and untouched payload; **no credential**, a **wr
 **empty vendor secret** (even with a matching empty credential, which is a valid HMAC) are refused with 401
 and nothing is posted; an **oversize** body is refused with 413; a **replay** carries the same event key; an
 **unknown** route token and a **disabled** ingress are 404; other methods are 405; control down on lookup is
-503 and on post is 502 (the vendor retries).
+503 and on post is 502 (the vendor retries). It also checks that control refusing the router (401/403) or
+throttling it (408, 425, 429) is retryable rather than a silent 404, that a chunked oversize body and a body that is
+not JSON are handled, and, when `SignStale` is set, that a correctly signed credential with a stale timestamp is
+refused.
 
 ```go
 func TestWebhook_conformance(t *testing.T) {

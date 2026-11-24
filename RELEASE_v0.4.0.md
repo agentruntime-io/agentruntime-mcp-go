@@ -47,6 +47,21 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
   keeps retrying anything else, so a revoked connection must answer `200 {"ok":true,"removed":false}`, not 502.
 - **`BodyDigest`**, **`InboundUnregisterWebhookPath`**.
 
+### Review fixes (behaviour to know when upgrading)
+
+- **Control refusing the router is retryable and logged.** `ResolveTriggerIngress` treats only 404 as an unknown route;
+  401, 403, 429 and 5xx are errors (the vendor gets 503 and the router logs why) instead of a silent 404. For the event
+  post, 401, 403, 408, 425, 429 and 5xx answer 502 (the vendor retries), 404 and `403 {"error":"ingress_disabled"}` answer
+  404, other 4xx answer 400. Every refusal is logged with the connection id, never the route token.
+- **Manifest rule for `registration.unit`.** `Validate` now requires, for `many_per_connection`, a filter field with the
+  id of `registration.unit` and op `eq` on every event. Control uses it to match a trigger's own `scope[unit]` (GitHub's
+  repository) so triggers on one connection do not receive each other's events.
+- **Webhook URLs are https.** `register-webhook` and `unregister-webhook` refuse an `http` `webhook_url` unless the host
+  is localhost, 127.0.0.1 or ::1 (local development).
+- **Conformance suite additions:** control 401/403 on lookup, 401/403/408/425/429 on post, `ingress_disabled`, 400/422,
+  a chunked oversize body, a body that is not JSON, an optional stale-timestamp credential (`SignStale`); the fake
+  ingress reports a catalog UUID as server id like production. New `FakeControl.ResolveStatus`, `PostStatus`, `PostBody`.
+
 ### Removed (no compatibility shims)
 
 `DeliverModeB`, `ModeBRequest`, `SignModeB`, `DeliverInboundFanOut`, `LookupInboundAdapterRoute`,
