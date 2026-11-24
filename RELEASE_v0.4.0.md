@@ -60,7 +60,8 @@ Contract: `docs/usage/TRIGGERS_ENGINE_CONTRACT_2026-11-23.md` (sections 8, 13, 1
   answers 413; other 4xx answer 400. An unrecognised 403 is treated as a wiring fault (retried). Every refusal is logged with the connection id, never the route token.
 - **`scope_schema` stays inside control's JSON Schema subset.** Control's validator takes `type` as ONE of `object`, `array`,
   `string`, `integer`, `number`, `boolean` (no type lists, no `null`), `properties` and `items` as schema objects, `required` as a
-  list of names, `enum` as a list, `additionalProperties` as a boolean; other keywords are annotations. `Validate` now refuses what
+  list of names, `enum` as a list, `additionalProperties` as a boolean, `pattern` as an RE2 string of at most 512 characters (control checks it on strings and
+  list items); other keywords are annotations. `Validate` now refuses what
   control refuses: a manifest control cannot store means no trigger of that source can ever be created (the GitHub manifest
   declared `repo` as `["string","array"]` and was exactly that).
 - **Manifest rule for `registration.unit`.** `Validate` now requires, for `many_per_connection`, a filter field with the
