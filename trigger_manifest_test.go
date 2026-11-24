@@ -205,3 +205,46 @@ func TestTriggerManifestValidate_manyPerConnectionNeedsAFilterNamedAfterTheUnit(
 		t.Fatalf("the unit filter must compare with eq (the engine matches the trigger's scope exactly), got %v", err)
 	}
 }
+
+// control's scope_schema validator accepts a small subset: type is ONE of object, array, string, integer,
+// number, boolean; properties and items are schema objects; required is a list of names; enum a list;
+// additionalProperties a boolean. A manifest outside it is stored by nobody, so no trigger of that source
+// could ever be created: the SDK refuses it first.
+func TestTriggerManifestValidate_scopeSchemaStaysInsideControlsSubset(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema map[string]any
+		want   string
+	}{
+		{"type list", map[string]any{"type": "object", "properties": map[string]any{
+			"repo": map[string]any{"type": []any{"string", "array"}}}}, "type"},
+		{"type null", map[string]any{"type": "null"}, "type"},
+		{"type nonsense", map[string]any{"type": "text"}, "type"},
+		{"items list", map[string]any{"type": "array", "items": []any{map[string]any{"type": "string"}}}, "items"},
+		{"property not an object", map[string]any{"type": "object", "properties": map[string]any{"a": "string"}}, "properties"},
+		{"required not a list", map[string]any{"type": "object", "required": "repo"}, "required"},
+		{"required with a non-name", map[string]any{"type": "object", "required": []any{1}}, "required"},
+		{"enum not a list", map[string]any{"type": "string", "enum": "a"}, "enum"},
+		{"additionalProperties not a boolean", map[string]any{"type": "object", "additionalProperties": map[string]any{}}, "additionalProperties"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := validTestManifest()
+			m.ScopeSchema = tc.schema
+			err := m.Validate("telegram")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want a refusal naming %q, got %v", tc.want, err)
+			}
+		})
+	}
+	ok := map[string]any{"type": "object", "required": []any{"repo"}, "additionalProperties": false, "properties": map[string]any{
+		"repo":   map[string]any{"type": "string", "title": "Repository", "minLength": 3},
+		"events": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []any{"push"}}, "x-from-events": true},
+		"limit":  map[string]any{"type": "integer", "minimum": 1, "default": 5},
+	}}
+	m := validTestManifest()
+	m.ScopeSchema = ok
+	if err := m.Validate("telegram"); err != nil {
+		t.Fatalf("a schema inside control's subset (annotations pass through): %v", err)
+	}
+}

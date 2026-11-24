@@ -355,50 +355,79 @@ func validateScopeSchema(schema map[string]any) error {
 	if _, err := s.Resolve(nil); err != nil {
 		return fmt.Errorf("trigger manifest: scope_schema is not a valid JSON Schema: %w", err)
 	}
-	if err := checkSchemaTypes(schema, "scope_schema"); err != nil {
+	// the typed map must survive a JSON round trip: control reads lists as []any and objects as map[string]any
+	var generic map[string]any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return fmt.Errorf("trigger manifest: scope_schema: %w", err)
+	}
+	if err := checkControlSchemaSubset(generic, ""); err != nil {
 		return err
 	}
-	return checkFromEvents(schema)
+	return checkFromEvents(generic)
 }
 
-var jsonSchemaTypes = map[string]struct{}{
-	"object": {}, "array": {}, "string": {}, "number": {}, "integer": {}, "boolean": {}, "null": {},
+// control's scope_schema validator accepts a small subset of JSON Schema: type is ONE of these names;
+// properties and items are schema objects; required is a list of names; enum a list; additionalProperties
+// a boolean. Other keywords (title, description, default, x-*, minLength, ...) pass through as annotations.
+// A manifest outside the subset is refused by control at discovery, so no trigger of that source could
+// ever be created; the SDK refuses it first, and tests catch it in the connector.
+var controlSchemaTypes = map[string]struct{}{
+	"object": {}, "array": {}, "string": {}, "integer": {}, "number": {}, "boolean": {},
 }
 
-func checkSchemaTypes(node any, where string) error {
-	switch v := node.(type) {
-	case map[string]any:
-		if t, ok := v["type"]; ok {
-			names := []string{}
-			switch tt := t.(type) {
-			case string:
-				names = append(names, tt)
-			case []any:
-				for _, n := range tt {
-					if s, ok := n.(string); ok {
-						names = append(names, s)
-					}
-				}
-			}
-			for _, n := range names {
-				if _, ok := jsonSchemaTypes[n]; !ok {
-					return fmt.Errorf("trigger manifest: %s has unknown type %q", where, n)
-				}
-			}
+func checkControlSchemaSubset(node map[string]any, path string) error {
+	bad := func(format string, args ...any) error {
+		return fmt.Errorf("trigger manifest: scope_schema%s "+format, append([]any{path}, args...)...)
+	}
+	if t, ok := node["type"]; ok {
+		name, isString := t.(string)
+		if _, supported := controlSchemaTypes[name]; !isString || !supported {
+			return bad(".type %v is not a supported type (one of object, array, string, integer, number, boolean)", t)
 		}
-		for k, child := range v {
-			if k == "enum" || k == "const" || k == "default" || k == "examples" {
-				continue
+	}
+	if props, ok := node["properties"]; ok {
+		pm, ok := props.(map[string]any)
+		if !ok {
+			return bad(".properties must be an object")
+		}
+		for name, raw := range pm {
+			sub, ok := raw.(map[string]any)
+			if !ok {
+				return bad(".properties.%s must be a schema object", name)
 			}
-			if err := checkSchemaTypes(child, where+"."+k); err != nil {
+			if err := checkControlSchemaSubset(sub, path+".properties."+name); err != nil {
 				return err
 			}
 		}
-	case []any:
-		for i, child := range v {
-			if err := checkSchemaTypes(child, fmt.Sprintf("%s[%d]", where, i)); err != nil {
-				return err
+	}
+	if items, ok := node["items"]; ok {
+		sub, ok := items.(map[string]any)
+		if !ok {
+			return bad(".items must be a schema object")
+		}
+		if err := checkControlSchemaSubset(sub, path+".items"); err != nil {
+			return err
+		}
+	}
+	if req, ok := node["required"]; ok {
+		list, ok := req.([]any)
+		if !ok {
+			return bad(".required must be an array of names")
+		}
+		for _, r := range list {
+			if _, ok := r.(string); !ok {
+				return bad(".required must be an array of names")
 			}
+		}
+	}
+	if en, ok := node["enum"]; ok {
+		if _, ok := en.([]any); !ok {
+			return bad(".enum must be an array")
+		}
+	}
+	if ap, ok := node["additionalProperties"]; ok {
+		if _, ok := ap.(bool); !ok {
+			return bad(".additionalProperties must be a boolean")
 		}
 	}
 	return nil
@@ -416,4 +445,23 @@ func checkFromEvents(schema map[string]any) error {
 		}
 	}
 	return nil
+}
+
+// RegisteredTriggerManifests returns the trigger manifest of every registered adapter that declares one,
+// keyed by adapter name. The router module's test runs each through Validate and compares it with the
+// committed fixture that control's own validator is also run against.
+func RegisteredTriggerManifests() (map[string]TriggerManifest, error) {
+	out := map[string]TriggerManifest{}
+	for _, name := range ListAdapterNames() {
+		adapters, err := getAdapters([]string{name})
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range adapters {
+			if ta, ok := a.(TriggerAdapter); ok {
+				out[name] = ta.TriggerManifest()
+			}
+		}
+	}
+	return out, nil
 }

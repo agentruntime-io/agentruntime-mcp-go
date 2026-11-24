@@ -75,8 +75,23 @@ type ResolveConfigError struct {
 	// Status is control's HTTP status; zero when the answer was 2xx but held no configuration.
 	Status int
 	Body   string
+	// Code and Message come from control's error envelope ({"error": code, "message": text}).
+	Code    string
+	Message string
 	// Empty means control answered but the connection holds no credentials.
 	Empty bool
+}
+
+func newResolveConfigError(status int, body string) *ResolveConfigError {
+	e := &ResolveConfigError{Status: status, Body: body}
+	var env struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(body), &env) == nil {
+		e.Code, e.Message = env.Error, env.Message
+	}
+	return e
 }
 
 func (e *ResolveConfigError) Error() string {
@@ -86,10 +101,17 @@ func (e *ResolveConfigError) Error() string {
 	return fmt.Sprintf("control resolve-test: status %d: %s", e.Status, e.Body)
 }
 
-// IsConnectionUnavailable reports that the connection (or its credentials) no longer exists: control
-// answered with a client error other than 408 or 429, or the connection holds no credentials. A
-// control outage, a timeout or a network failure is not: those are worth retrying. Unregister uses
-// it to tell "nothing left to remove" (answer 200, removed false) from "try again later" (502).
+// IsConnectionUnavailable reports that the connection itself no longer exists or holds no credentials:
+//   - control answered but the connection has no configuration (empty config_preview);
+//   - 404 with the code connection_not_found;
+//   - 422 "missing required config field" (a deleted connection resolves to no value for a required field).
+//
+// Everything else is NOT "gone": a wrong internal token (401), a service name control does not accept
+// (403 auth_forbidden), a malformed call (400), a hidden tool or missing server (404 not_found), a timeout,
+// rate limit, outage or network failure. Those are wiring or availability faults; reading them as "gone"
+// would let a last-trigger delete answer "nothing left to remove" and make control drop the ingress with
+// the vendor webhooks still registered. Unregister uses this to tell "nothing left to remove" (200,
+// removed false) from "try again later" (502).
 func IsConnectionUnavailable(err error) bool {
 	var re *ResolveConfigError
 	if !errors.As(err, &re) {
@@ -98,7 +120,14 @@ func IsConnectionUnavailable(err error) bool {
 	if re.Empty {
 		return true
 	}
-	return re.Status >= 400 && re.Status < 500 && re.Status != http.StatusRequestTimeout && re.Status != http.StatusTooManyRequests
+	switch {
+	case re.Status == http.StatusNotFound && re.Code == "connection_not_found":
+		return true
+	case re.Status == http.StatusUnprocessableEntity && re.Code == "validation_error" &&
+		strings.Contains(strings.ToLower(re.Message), "missing required config field"):
+		return true
+	}
+	return false
 }
 
 // ResolveMCPConnectionConfig resolves MCP connection credentials via Control resolve-test.
@@ -155,7 +184,7 @@ func ResolveMCPConnectionConfig(ctx context.Context, env TriggerEnv, tenantID, p
 		return out, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return out, &ResolveConfigError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+		return out, newResolveConfigError(resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
@@ -215,7 +244,7 @@ func ResolveMCPInstanceConfig(ctx context.Context, env TriggerEnv, tenantID, pro
 		return out, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return out, &ResolveConfigError{Status: resp.StatusCode, Body: strings.TrimSpace(string(raw))}
+		return out, newResolveConfigError(resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
