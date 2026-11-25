@@ -49,4 +49,38 @@ func TestRegister_descriptionsNoEllipsis(t *testing.T) {
 | `AssertStringPropertyMinLength` | Assert one schema property has `minLength` |
 | `AssertRequiredStringIDsHaveMinLength` | Fail when a required `*_id` string lacks `minLength=1` |
 
+## Inbound webhook conformance
+
+A connector that receives vendor webhooks must pass `InboundWebhookConformance`. It runs the connector's
+real handler against a fake control-service (`FakeControl`) and checks: a valid delivery is posted with the
+right `event_type`, `event_key` and untouched payload; **no credential**, a **wrong credential** and an
+**empty vendor secret** (even with a matching empty credential, which is a valid HMAC) are refused with 401
+and nothing is posted; an **oversize** body is refused with 413; a **replay** carries the same event key; an
+**unknown** route token and a **disabled** ingress are 404; other methods are 405; control down on lookup is
+503 and on post is 502 (the vendor retries). It also checks that control refusing the router (401/403) or
+throttling it (408, 425, 429) is retryable rather than a silent 404, that a chunked oversize body and a body that is
+not JSON are handled, and, when `SignStale` is set, that a correctly signed credential with a stale timestamp is
+refused.
+
+```go
+func TestWebhook_conformance(t *testing.T) {
+    mux := http.NewServeMux()
+    adapter{}.RegisterWebhook(mux)
+    connectortest.InboundWebhookConformance{
+        Adapter:      "github",
+        Handler:      mux,
+        VendorSecret: "whsec-test",
+        Body:         []byte(`{"ref":"refs/heads/main","repository":{"full_name":"o/r"}}`),
+        Prepare:      func(r *http.Request, body []byte) { r.Header.Set("X-GitHub-Event", "push"); r.Header.Set("X-GitHub-Delivery", "d-1") },
+        Sign:         func(r *http.Request, body []byte, secret string) { /* set the vendor signature header */ },
+        WantEventType: "push",
+        WantEventKey:  "github-d-1",
+    }.Run(t)
+}
+```
+
+`ControlRoutes` adds control endpoints the connector calls while verifying (payments-lk reads the merchant key
+through `/v1/mcp/config/resolve-test`). `TriggerManifest.Validate(adapter)` in the root package checks a manifest
+the way control does; call it from the connector's tests too.
+
 See [`connectors/docs/BUILD_A_CONNECTOR.md`](../../../connectors/docs/BUILD_A_CONNECTOR.md) §4.7 for the full testing pyramid.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,30 +22,37 @@ const (
 	inboundProjectHeader       = "X-Project-Id"
 )
 
-// InboundVendorAdapter may be implemented alongside Adapter by connectors that support
-// platform-managed vendor webhook registration (POST register / GET status on the connector router).
+// InboundVendorAdapter may be implemented alongside Adapter by connectors whose vendor webhook
+// the platform registers for the person: POST register-webhook, GET webhook-status and POST
+// unregister-webhook on the connector router. control-service calls these routes (the BFF no
+// longer does). Implement it with MountInboundVendorRoutes, which owns authentication, request
+// parsing and the response shapes; the connector supplies only the vendor calls.
 type InboundVendorAdapter interface {
 	RegisterInboundVendor(mux *http.ServeMux)
 }
 
-// InboundRegisterWebhookPath returns POST /{adapter}/inbound/register-webhook/{routeToken}.
-func InboundRegisterWebhookPath(adapter, routeToken string) string {
-	adapter = strings.Trim(strings.ToLower(strings.TrimSpace(adapter)), "/")
+func inboundRoutePath(adapter, action, routeToken string) string {
+	adapter = normalizeAdapterSlug(adapter)
 	token := strings.Trim(strings.TrimSpace(routeToken), "/")
 	if adapter == "" || token == "" {
 		return ""
 	}
-	return fmt.Sprintf("/%s/inbound/register-webhook/%s", adapter, token)
+	return fmt.Sprintf("/%s/inbound/%s/%s", adapter, action, token)
+}
+
+// InboundRegisterWebhookPath returns POST /{adapter}/inbound/register-webhook/{routeToken}.
+func InboundRegisterWebhookPath(adapter, routeToken string) string {
+	return inboundRoutePath(adapter, "register-webhook", routeToken)
 }
 
 // InboundWebhookStatusPath returns GET /{adapter}/inbound/webhook-status/{routeToken}.
 func InboundWebhookStatusPath(adapter, routeToken string) string {
-	adapter = strings.Trim(strings.ToLower(strings.TrimSpace(adapter)), "/")
-	token := strings.Trim(strings.TrimSpace(routeToken), "/")
-	if adapter == "" || token == "" {
-		return ""
-	}
-	return fmt.Sprintf("/%s/inbound/webhook-status/%s", adapter, token)
+	return inboundRoutePath(adapter, "webhook-status", routeToken)
+}
+
+// InboundUnregisterWebhookPath returns POST /{adapter}/inbound/unregister-webhook/{routeToken}.
+func InboundUnregisterWebhookPath(adapter, routeToken string) string {
+	return inboundRoutePath(adapter, "unregister-webhook", routeToken)
 }
 
 // InboundVendorMountPrefix returns /{adapter}/inbound/ for mux registration.
@@ -62,8 +70,68 @@ type ResolveTestResponse struct {
 	Meta          map[string]any `json:"meta"`
 }
 
+// ResolveConfigError is a failed credential lookup through control's resolve-test.
+type ResolveConfigError struct {
+	// Status is control's HTTP status; zero when the answer was 2xx but held no configuration.
+	Status int
+	Body   string
+	// Code and Message come from control's error envelope ({"error": code, "message": text}).
+	Code    string
+	Message string
+	// Empty means control answered but the connection holds no credentials.
+	Empty bool
+}
+
+func newResolveConfigError(status int, body string) *ResolveConfigError {
+	e := &ResolveConfigError{Status: status, Body: body}
+	var env struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(body), &env) == nil {
+		e.Code, e.Message = env.Error, env.Message
+	}
+	return e
+}
+
+func (e *ResolveConfigError) Error() string {
+	if e.Empty {
+		return "control resolve-test returned empty config_preview"
+	}
+	return fmt.Sprintf("control resolve-test: status %d: %s", e.Status, e.Body)
+}
+
+// IsConnectionUnavailable reports that the connection itself no longer exists or holds no credentials:
+//   - control answered but the connection has no configuration (empty config_preview);
+//   - 404 with the code connection_not_found;
+//   - 422 "missing required config field" (a deleted connection resolves to no value for a required field).
+//
+// Everything else is NOT "gone": a wrong internal token (401), a service name control does not accept
+// (403 auth_forbidden), a malformed call (400), a hidden tool or missing server (404 not_found), a timeout,
+// rate limit, outage or network failure. Those are wiring or availability faults; reading them as "gone"
+// would let a last-trigger delete answer "nothing left to remove" and make control drop the ingress with
+// the vendor webhooks still registered. Unregister uses this to tell "nothing left to remove" (200,
+// removed false) from "try again later" (502).
+func IsConnectionUnavailable(err error) bool {
+	var re *ResolveConfigError
+	if !errors.As(err, &re) {
+		return false
+	}
+	if re.Empty {
+		return true
+	}
+	switch {
+	case re.Status == http.StatusNotFound && re.Code == "connection_not_found":
+		return true
+	case re.Status == http.StatusUnprocessableEntity && re.Code == "validation_error" &&
+		strings.Contains(strings.ToLower(re.Message), "missing required config field"):
+		return true
+	}
+	return false
+}
+
 // ResolveMCPConnectionConfig resolves MCP connection credentials via Control resolve-test.
-func ResolveMCPConnectionConfig(ctx context.Context, env InboundAdapterRouteEnv, tenantID, projectID, connectionID, serverID, toolName string) (ResolveTestResponse, error) {
+func ResolveMCPConnectionConfig(ctx context.Context, env TriggerEnv, tenantID, projectID, connectionID, serverID, toolName string) (ResolveTestResponse, error) {
 	var out ResolveTestResponse
 	tenantID = strings.TrimSpace(tenantID)
 	connectionID = strings.TrimSpace(connectionID)
@@ -116,19 +184,19 @@ func ResolveMCPConnectionConfig(ctx context.Context, env InboundAdapterRouteEnv,
 		return out, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return out, fmt.Errorf("control resolve-test: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return out, newResolveConfigError(resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
 	}
 	if len(out.ConfigPreview) == 0 {
-		return out, fmt.Errorf("control resolve-test returned empty config_preview")
+		return out, &ResolveConfigError{Empty: true}
 	}
 	return out, nil
 }
 
 // ResolveMCPInstanceConfig resolves MCP instance credentials via Control resolve-test.
-func ResolveMCPInstanceConfig(ctx context.Context, env InboundAdapterRouteEnv, tenantID, projectID, instanceID, toolName string) (ResolveTestResponse, error) {
+func ResolveMCPInstanceConfig(ctx context.Context, env TriggerEnv, tenantID, projectID, instanceID, toolName string) (ResolveTestResponse, error) {
 	var out ResolveTestResponse
 	tenantID = strings.TrimSpace(tenantID)
 	instanceID = strings.TrimSpace(instanceID)
@@ -176,13 +244,13 @@ func ResolveMCPInstanceConfig(ctx context.Context, env InboundAdapterRouteEnv, t
 		return out, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return out, fmt.Errorf("control resolve-test: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return out, newResolveConfigError(resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return out, err
 	}
 	if len(out.ConfigPreview) == 0 {
-		return out, fmt.Errorf("control resolve-test returned empty config_preview")
+		return out, &ResolveConfigError{Empty: true}
 	}
 	return out, nil
 }
@@ -197,13 +265,13 @@ func InboundRouteToken(path, mountPrefix, action string) string {
 	return strings.Trim(strings.TrimPrefix(path, prefix), "/")
 }
 
-// WriteInboundVendorJSON writes a JSON response for inbound vendor admin routes.
+// InboundVendorContext carries the tenant scope control sends with an admin call.
 type InboundVendorContext struct {
 	TenantID  string
 	ProjectID string
 }
 
-// InboundVendorContextFromRequest reads tenant/project headers set by the BFF proxy.
+// InboundVendorContextFromRequest reads the X-Tenant-Id / X-Project-Id headers control sets.
 func InboundVendorContextFromRequest(r *http.Request) InboundVendorContext {
 	return InboundVendorContext{
 		TenantID:  strings.TrimSpace(r.Header.Get(inboundTenantHeader)),
@@ -212,19 +280,19 @@ func InboundVendorContextFromRequest(r *http.Request) InboundVendorContext {
 }
 
 // ValidateInboundInternalToken ensures the caller presents the fleet internal token.
-func ValidateInboundInternalToken(r *http.Request, env InboundAdapterRouteEnv) error {
+func ValidateInboundInternalToken(r *http.Request, env TriggerEnv) error {
 	expected := strings.TrimSpace(env.InternalToken)
 	if expected == "" {
 		return fmt.Errorf("MCP_CONTROL_INTERNAL_TOKEN not configured")
 	}
 	got := strings.TrimSpace(r.Header.Get(inboundInternalTokenHeader))
-	if got == "" || got != expected {
+	if got == "" || !ConstantTimeEqual(got, expected) {
 		return fmt.Errorf("unauthorized")
 	}
 	return nil
 }
 
-// InboundVendorContext carries tenant scope from BFF proxy headers.
+// WriteInboundVendorJSON writes a JSON response for inbound vendor admin routes.
 func WriteInboundVendorJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

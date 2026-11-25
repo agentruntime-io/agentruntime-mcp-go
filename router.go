@@ -1,6 +1,8 @@
 package agentruntimemcp
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -96,18 +98,15 @@ func RunWithRouter(configPath string) error {
 		mux.Handle(mountPath, h)
 		mux.Handle(mountPath+"/", h)
 
-		// Register optional vendor-webhook routes for adapters that implement
-		// WebhookAdapter (e.g. GitHub, Slack). Adapters that don't are unaffected.
+		// Mount the optional routes of adapters that implement WebhookAdapter,
+		// InboundVendorAdapter or TriggerAdapter. Adapters that don't are unaffected.
 		adps, err := getAdapters([]string{name})
 		if err != nil {
 			return err
 		}
 		for _, adp := range adps {
-			if wa, ok := adp.(WebhookAdapter); ok {
-				wa.RegisterWebhook(mux)
-			}
-			if iva, ok := adp.(InboundVendorAdapter); ok {
-				iva.RegisterInboundVendor(mux)
+			if err := mountAdapterExtras(mux, name, adp); err != nil {
+				return err
 			}
 		}
 	}
@@ -132,6 +131,55 @@ func RunWithRouter(configPath string) error {
 
 	log.Printf("MCP router listening on %s (adapters: %v)", addr, names)
 	return http.ListenAndServe(addr, mux)
+}
+
+// mountAdapterExtras mounts the optional routes an adapter declares by implementing
+// WebhookAdapter (the vendor-facing webhook), InboundVendorAdapter (register, status and
+// unregister, called by control) and TriggerAdapter (GET /{adapter}/triggers). A trigger
+// manifest that control would refuse is an error here, so the router fails at startup instead
+// of failing discovery in production.
+func mountAdapterExtras(mux *http.ServeMux, name string, adp Adapter) error {
+	if wa, ok := adp.(WebhookAdapter); ok {
+		wa.RegisterWebhook(mux)
+	}
+	if iva, ok := adp.(InboundVendorAdapter); ok {
+		iva.RegisterInboundVendor(mux)
+	}
+	if ta, ok := adp.(TriggerAdapter); ok {
+		manifest := ta.TriggerManifest()
+		if err := manifest.Validate(name); err != nil {
+			return fmt.Errorf("adapter %s: %w", name, err)
+		}
+		mux.Handle(TriggerManifestPath(name), TriggerManifestHandler(manifest, LoadTriggerEnv))
+		log.Printf("Trigger manifest route registered at %s", TriggerManifestPath(name))
+	}
+	return nil
+}
+
+// TriggerManifestHandler serves a connector's trigger manifest (GET /{adapter}/triggers).
+// It requires the router's internal token and fails closed when none is configured.
+func TriggerManifestHandler(manifest TriggerManifest, loadEnv func() TriggerEnv) http.Handler {
+	body, err := json.Marshal(manifest.Normalized())
+	if loadEnv == nil {
+		loadEnv = LoadTriggerEnv
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if err := ValidateInboundInternalToken(r, loadEnv()); err != nil {
+			WriteInboundVendorError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if err != nil {
+			WriteInboundVendorError(w, http.StatusInternalServerError, "manifest unavailable")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(body)
+	})
 }
 
 func getEnv(key, def string) string {
